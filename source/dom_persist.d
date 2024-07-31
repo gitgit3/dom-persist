@@ -349,7 +349,7 @@ class Tree_Db {
 
 		//load the tree in one hit using the tree_id
 		//also order by the parent_id so that we know all siblings are grouped together
-		//and also by child order
+		//and then by child order
 
 		auto results = db.execute( format("select ID, e_data, p_id, t_id from doctree where tree_id=%d or id=%d order by p_id,c_odr", tree_id, tree_id) );
 		foreach (row; results){
@@ -414,9 +414,7 @@ unittest{
 	assert( nd_t.e_data == tree_list[0].name );
 	assert( nd_t.pid == 0 );
 	assert( nd_t.type == TreeNodeType.tree );
-	
-	//writeln( tree_node.child_nodes );
-	
+		
 	int i=0;
 	foreach( node_ptr; tree_node.child_nodes ){		
 
