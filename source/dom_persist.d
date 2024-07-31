@@ -320,8 +320,14 @@ struct TreeNameID {
 }
 
 struct TreeNode {
+	
 	NodeData node_data;
 	TreeNode*[] child_nodes;
+
+	this(NodeData node_data){
+		this.node_data = node_data;
+	}
+	
 }
 
 /**
@@ -356,13 +362,12 @@ class Tree_Db {
 			
 			long id = row.peek!long(0);
 			long p_id = row.peek!long(2);
-			TreeNode tn;
-			tn.node_data = NodeData(
+			TreeNode tn = TreeNode( NodeData(
 				id,
 				row.peek!string(1),
 				p_id,
 				getTreeNodeType( row.peek!int(3) )
-			);
+			));
 			all_nodes[id] = tn;
 			if(p_id==0) continue;
 			all_nodes[p_id].child_nodes ~= &all_nodes[id];
@@ -396,6 +401,30 @@ class Tree_Db {
 	TreeNode getTreeNode(){
 		return all_nodes[tree_id];
 	}
+
+	string getTreeAsText( ){
+		return getTreeAsText_r( all_nodes[tree_id] );
+	}
+
+
+	protected:
+	
+	string getTreeAsText_r( ref TreeNode tn ){
+		
+		string strRtn = "";
+
+		TreeNode*[] children = tn.child_nodes;
+		foreach( child; children){
+			NodeData nd = child.node_data;
+			strRtn ~= get_openTag_commence( nd.type, nd.e_data );
+			// --> add attributes if required
+			strRtn ~= get_openTag_end( nd.type, nd.e_data );
+			strRtn ~= getTreeAsText_r( *child );
+			strRtn ~= get_closeTag( nd.type, nd.e_data );
+		}
+		
+		return strRtn;
+	}
 	
 }
 
@@ -414,7 +443,9 @@ unittest{
 	assert( nd_t.e_data == tree_list[0].name );
 	assert( nd_t.pid == 0 );
 	assert( nd_t.type == TreeNodeType.tree );
-		
+
+	TreeNode* html_node;
+	
 	int i=0;
 	foreach( node_ptr; tree_node.child_nodes ){		
 
@@ -429,6 +460,7 @@ unittest{
 			break;
 
 		case 1:
+			html_node = node_ptr;
 			assert( c_node.ID == 3 );
 			assert( c_node.e_data == "html" );
 			assert( c_node.pid == tree_list[0].tree_id );
@@ -442,6 +474,8 @@ unittest{
 		i+=1;
 	}
 	
-	
-	
+	string html_out = tree.getTreeAsText( );
+	assert( html_out == "<DOCTYPE html><html><head><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
+		
+
 }
