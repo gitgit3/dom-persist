@@ -16,7 +16,9 @@ version(unittest){
 }
 
 unittest {
-		
+	
+	writeln( "Testing tree creation (old code)" );
+	
 	db_drop( sqlite_filename );
 	assert( !db_exists( sqlite_filename ) );
 
@@ -48,6 +50,7 @@ unittest {
 	assert( html_out == "<DOCTYPE html><html><head><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
 	
 	db.close();
+	
 }
 
 bool db_exists( string sqlite_filename ){
@@ -430,6 +433,8 @@ class Tree_Db {
 
 unittest{
 
+	writeln( "Testing tree loading" );
+
 	auto db = Database( sqlite_filename );
 		
 	TreeNameID[] tree_list = Tree_Db.getTreeList( db );
@@ -470,12 +475,12 @@ unittest{
 		default:
 		}
 	
-		//writeln( c_node );
 		i+=1;
 	}
 	
 	string html_out = tree.getTreeAsText( );
 	assert( html_out == "<DOCTYPE html><html><head><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
+
 		
 
 }
