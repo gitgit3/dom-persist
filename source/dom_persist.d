@@ -612,18 +612,13 @@ class Tree_Db {
 	Otherwise, move the node and all children into a delete-map.	
 	Mark the TreeNode parent as dirty indicating that children need removing. Re-ordering is
 	not required but may be advantageous
-	
+	flush: Delete entries using the delete-map and clear the map.
+
  Move node
 	Move the node and all children into new parent (same parent also works)
 	Mark old parent TreeNode as dirty indicating a re-order is necessary, re-order ram children
 	Mark new parent TreeNode as dirty indicating a re-order is necessary, re-order ram children
 	update parent id of moved child
-
- Save/flush
-	Work through the map and check for dirty flags. The order does not matter since the tree is
-	the final state to which the db needs to match.
-	Edit DB and reset flags.
-	Delete entries using the delete-map and clear.
 	
  */ 
  
