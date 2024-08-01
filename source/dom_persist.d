@@ -1,6 +1,7 @@
 module dom_persist;
 
 import std.file;
+import std.array;	//https://dlang.org/phobos/std_array.html
 import std.conv;
 import std.stdio;
 import std.format;
@@ -51,6 +52,51 @@ unittest {
 	
 	db.close();
 	
+}
+
+unittest{
+
+	writeln( "Testing DocOrderIterator" );
+
+	auto db = Database( sqlite_filename );
+	TreeNameID[] tree_list = Tree_Db.getTreeList( db );	
+	Tree_Db tree = Tree_Db.loadTree( &db, tree_list[0].tree_id );
+	
+	TreeNode* tree_node = tree.getTreeNode();
+	
+	DocOrderIterator it = new DocOrderIterator( tree_node );
+	int i=0;
+	TreeNode* nxt;
+	while( (nxt=it.nextNode) !is null ){		
+		switch(i){
+		case 0:
+			assert( (*nxt).node_data.type == TreeNodeType.tree );
+			break;
+			
+		case 1:
+			assert( (*nxt).node_data.type == TreeNodeType.docType );
+			break;
+
+		case 2:
+		case 3:
+		case 5:
+		case 8:
+			assert( (*nxt).node_data.type == TreeNodeType.element );
+			break;
+
+		case 4:
+			assert( (*nxt).node_data.type == TreeNodeType.comment );
+			break;
+
+		case 6:
+		case 7:
+			assert( (*nxt).node_data.type == TreeNodeType.text );
+			break;
+
+		default:
+		}
+		i+=1;
+	}
 }
 
 bool db_exists( string sqlite_filename ){
@@ -327,14 +373,51 @@ struct TreeNode {
 	
 	private:
 	
+	Tree_Db owner_tree;
+	
 	public:
-	NodeData node_data;
-	TreeNode*[] child_nodes;
+	
+	NodeData 		node_data;
+	TreeNode*[] 	child_nodes;
+	bool				dirty;	// true indicates a change in child_nodes
 
-	this( NodeData node_data){
+	this( Tree_Db owner_tree, NodeData node_data){
+		this.owner_tree = owner_tree;
 		this.node_data = node_data;
 	}
 	
+	/**
+	 * Returns the parent node of this node or null if no parent exists (i.e. tree-root)
+	 */
+	TreeNode* parentNode(){
+		if(node_data.pid==0) return null;
+		return owner_tree.getTreeNodeById( node_data.pid );
+	}
+	
+	/**
+	 * Returns the next sibling of this node or null if none exists
+	 */
+	TreeNode* nextSibling(){
+		if(node_data.pid==0) return null;
+		TreeNode* p_node = owner_tree.getTreeNodeById( node_data.pid );
+		foreach( i, c_node; p_node.child_nodes){
+			if(c_node==&this){
+				if( i == p_node.child_nodes.length-1) return null;
+				return p_node.child_nodes[i+1];
+			}
+		}
+		throw new Exception("Damaged tree, possibly incorrect parent id for a child.");
+	}
+
+	bool hasChildNodes(){
+		return child_nodes.length>0;
+	}
+
+	TreeNode* firstChild(){
+		if( child_nodes.length==0 ) return null;
+		return child_nodes[0];
+	}
+
 	/**
 	 * Set the data for this node.
 	 * 
@@ -345,6 +428,14 @@ struct TreeNode {
 		node_data.e_data = nData;
 		node_data.dirty = true;
 	}
+	
+	/**
+	 * Insert a new child node at the position indicated.
+	 */
+	void insertChild( TreeNodeType n_type, string e_data, int pos ){		
+		owner_tree.insertChild( &this, n_type, e_data, pos );		
+	}
+	
 }
 
 /**
@@ -359,27 +450,27 @@ class Tree_Db {
 
 	protected:
 	
-		long tree_id;
-		Database* db;		
-		
-		TreeNode[long]	all_nodes;
+	long tree_id;
+	Database* db;
+	long nnid = 0;		
+	
+	TreeNode[long]	all_nodes;
 		
 		
 	this( Database* db, long tid ){
-
 		this.db = db;
 		tree_id = tid;
-
+			
 		//load the tree in one hit using the tree_id
 		//also order by the parent_id so that we know all siblings are grouped together
 		//and then by child order
-
-		auto results = db.execute( format("select ID, e_data, p_id, t_id from doctree where tree_id=%d or id=%d order by p_id,c_odr", tree_id, tree_id) );
+	
+		auto results = db.execute( format("select ID, e_data, p_id, t_id from doctree where tree_id=%d or id=%d order by p_id,c_odr", tid, tid) );
 		foreach (row; results){
 			
 			long id = row.peek!long(0);
 			long p_id = row.peek!long(2);
-			TreeNode tn = TreeNode( NodeData(
+			TreeNode tn = TreeNode( this, NodeData(
 				id,
 				row.peek!string(1),
 				p_id,
@@ -389,7 +480,6 @@ class Tree_Db {
 			if(p_id==0) continue;
 			all_nodes[p_id].child_nodes ~= &all_nodes[id];
 		}
-
 	}
 	
 	public:
@@ -412,7 +502,12 @@ class Tree_Db {
 	}
 	
 	static Tree_Db loadTree( Database* db, long tid ){
-		return new Tree_Db( db, tid );
+		return new Tree_Db( db, tid );		
+	}
+	
+	long getNextNodeId(){
+		nnid -= 1;
+		return nnid;
 	}
 	
 	TreeNode* getTreeNode(){
@@ -430,19 +525,54 @@ class Tree_Db {
 		return getTreeAsText_r( all_nodes[tree_id] );
 	}
 
+
+	/**
+	 * Insert a new child of parent node (p_node) at the position (pos) indicated.
+	 */
+	void insertChild( TreeNode* p_node, TreeNodeType n_type, string e_data, int pos ){
+				
+	/* Insert new node:
+		add into the correct place, assign a new id <=-1. 
+		An ID is required to add to the map. Using negative IDs indicates that it is not a DB ID.
+		Increment the order_id of following sibling nodes
+		Mark the TreeNode parent as dirty indicating that children need adding and re-ordering*/
+	
+		long id = getNextNodeId();
+		TreeNode tn = TreeNode( 
+			this, 
+			NodeData( id, e_data, p_node.node_data.ID, n_type)
+		);
+		
+		this.all_nodes[ id ] = tn;		
+		p_node.child_nodes.insertInPlace( pos, &this.all_nodes[ id ]);
+		p_node.dirty = true;
+	}
+
+
 	/**
 	 * Save all edits to the tree to the database. After this call, the database values will be in sync
 	 * with the memory tree.
 	 */
 	void flush(){		
 		
-		foreach( node; all_nodes.values() ){
-			NodeData nd = node.node_data;
-			if( nd.dirty ){
+		// nodes must be written in document order so that a valid database ID is always available as a parent
+		//ID for subsequent child writes. This is because the child update will write
+
+		DocOrderIterator it = new DocOrderIterator( &all_nodes[tree_id] );
+		TreeNode* tnode;
+		while( (tnode=it.nextNode) !is null ){
+			NodeData nd = tnode.node_data;
+			
+			//first we check the ID<0 which implies it is a new node
+			if( nd.ID<0 ){
+				writeln("todo create:", nd );
+				
+			}else if( nd.dirty ){
 				db.run( format("update doctree set e_data='%s' where id=%d", nd.e_data, nd.ID ) );
 				nd.dirty = false;
 			}
 		}
+
 	}
 
 	protected:
@@ -467,10 +597,6 @@ class Tree_Db {
 }
 /*
  
- Edit node:
-	No attributes at this stage so only editing the e_data field.
-	Add dirty field to NodeData and mark accordingly
-	
  Insert new node:
 	add into the correct place, assign a new id <=-1. 
 	An ID is required to add to the map. Using negative IDs indicates that it is not a DB ID.
@@ -544,8 +670,19 @@ unittest{
 		i+=1;
 	}
 	
-	string html_out = tree.getTreeAsText( );
+	string html_out = tree.getTreeAsText( );	
 	assert( html_out == "<DOCTYPE html><html><head><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
+
+	writeln( "Testing tree element insertion" );
+
+	//get head element
+	TreeNode* tn_head = html_node.child_nodes[0];	
+	
+	//add an element to the head at position zero
+	tn_head.insertChild( TreeNodeType.element, "script", 0 );
+	
+	html_out = tree.getTreeAsText( );	
+	assert( html_out == "<DOCTYPE html><html><head><script></script><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
 
 	writeln( "Testing tree editing" );
 
@@ -554,7 +691,7 @@ unittest{
 	tn.setData( "An edit took place");
 	
 	html_out = tree.getTreeAsText( );	
-	assert( html_out == "<DOCTYPE html><html><head><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
+	assert( html_out == "<DOCTYPE html><html><head><script></script><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
 
 	//check that the database entry is unchanged
 	auto results = db.execute( "select e_data from doctree where id=5" );
@@ -564,11 +701,61 @@ unittest{
 	
 	// save to database	
 	tree.flush();
+		
+	//check db contents using a new tree
+	/*Tree_Db tree2 = Tree_Db.loadTree( &db, tree_list[0].tree_id );
+	html_out = tree2.getTreeAsText( );	
+	assert( html_out == "<DOCTYPE html><html><head><script></script><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
+	*/
 	
-	//check that the database entry has been updated
-	auto results2 = db.execute( "select e_data from doctree where id=5" );
-	foreach (row; results2){		
-		assert( "An edit took place" == row.peek!string(0) );
+}
+
+
+/**
+ * Iterator starting at any given TreeNode, traversing each of the descendent nodes, depth first and increasing child index.
+ */
+class DocOrderIterator {
+	
+	TreeNode* start_node;
+	TreeNode* next_node;
+	
+	this( TreeNode* n ){
+		start_node = n;
+		next_node = n;
+	}
+	
+	/**
+	 * The initial TreeNode is the first node to be returned.
+	 */
+	TreeNode* nextNode(){
+	
+		//the node we will return this time
+		TreeNode* rtnNode = next_node;
+		if(rtnNode==null) return null;
+			
+		//now work out the node for the next call
+				
+		if( rtnNode.hasChildNodes() ){
+			next_node = rtnNode.firstChild();			
+			return rtnNode;
+		}
+		
+		TreeNode* anc_node = rtnNode;
+		while( anc_node !is null && anc_node.nextSibling() is null){
+			anc_node = anc_node.parentNode();
+			if( anc_node == start_node ){
+				anc_node=null;
+				break;
+			}
+		}
+		if(anc_node is null) {
+			next_node=null;
+			return rtnNode;
+		}
+		
+		next_node = anc_node.nextSibling();
+		return rtnNode;
+	
 	}
 	
 }
