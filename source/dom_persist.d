@@ -86,20 +86,6 @@ TreeNodeType getTreeNodeType( int tip ){
 }
 
 
-struct NodeData {
-	
-	long ID;
-	string e_data;
-	long pid;
-	TreeNodeType type;
-	
-	this( long ID, string e_data, long pid, TreeNodeType type){
-		this.ID = ID;
-		this.e_data = e_data;
-		this.pid = pid;
-		this.type = type;
-	}
-}
 
 /**
  * This class provides direct database access to all trees in the database table. You can also obtain from it
@@ -316,6 +302,21 @@ string get_closeTag( TreeNodeType nt, string e_data ){
 	
 }
 
+struct NodeData {
+	
+	long ID;
+	string e_data;
+	long pid;
+	TreeNodeType type;
+	bool dirty = false;
+	
+	this( long ID, string e_data, long pid, TreeNodeType type){
+		this.ID = ID;
+		this.e_data = e_data;
+		this.pid = pid;
+		this.type = type;
+	}
+}
 
 struct TreeNameID {
 	long tree_id;
@@ -324,13 +325,26 @@ struct TreeNameID {
 
 struct TreeNode {
 	
+	private:
+	
+	public:
 	NodeData node_data;
 	TreeNode*[] child_nodes;
 
-	this(NodeData node_data){
+	this( NodeData node_data){
 		this.node_data = node_data;
 	}
 	
+	/**
+	 * Set the data for this node.
+	 * 
+	 * The data is interpreted using the type of node. For example, the text content of a text node is
+	 * the data whereas for element types, the data is used to hold the element name.
+	 */
+	void setData( string nData ){
+		node_data.e_data = nData;
+		node_data.dirty = true;
+	}
 }
 
 /**
@@ -351,9 +365,9 @@ class Tree_Db {
 		TreeNode[long]	all_nodes;
 		
 		
-	this( Database db, long tid ){
+	this( Database* db, long tid ){
 
-		this.db = &db;
+		this.db = db;
 		tree_id = tid;
 
 		//load the tree in one hit using the tree_id
@@ -397,18 +411,39 @@ class Tree_Db {
 		return tree_list;		
 	}
 	
-	static Tree_Db loadTree( ref Database db, long tid ){
+	static Tree_Db loadTree( Database* db, long tid ){
 		return new Tree_Db( db, tid );
 	}
 	
-	TreeNode getTreeNode(){
-		return all_nodes[tree_id];
+	TreeNode* getTreeNode(){
+		return &all_nodes[tree_id];
 	}
 
+	TreeNode* getTreeNodeById( long id ){
+		return &all_nodes[id];
+	}
+
+	/**
+	 * Return the tree as html text. This is the cached tree with all changes and not from the database.
+	 */
 	string getTreeAsText( ){
 		return getTreeAsText_r( all_nodes[tree_id] );
 	}
 
+	/**
+	 * Save all edits to the tree to the database. After this call, the database values will be in sync
+	 * with the memory tree.
+	 */
+	void flush(){		
+		
+		foreach( node; all_nodes.values() ){
+			NodeData nd = node.node_data;
+			if( nd.dirty ){
+				db.run( format("update doctree set e_data='%s' where id=%d", nd.e_data, nd.ID ) );
+				nd.dirty = false;
+			}
+		}
+	}
 
 	protected:
 	
@@ -453,6 +488,12 @@ class Tree_Db {
 	Mark old parent TreeNode as dirty indicating a re-order is necessary, re-order ram children
 	Mark new parent TreeNode as dirty indicating a re-order is necessary, re-order ram children
 	update parent id of moved child
+
+ Save/flush
+	Work through the map and check for dirty flags. The order does not matter since the tree is
+	the final state to which the db needs to match.
+	Edit DB and reset flags.
+	Delete entries using the delete-map and clear.
 	
  */ 
  
@@ -465,9 +506,9 @@ unittest{
 	TreeNameID[] tree_list = Tree_Db.getTreeList( db );
 	assert( tree_list.length==1 );
 	
-	Tree_Db tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
+	Tree_Db tree = Tree_Db.loadTree( &db, tree_list[0].tree_id );
 	
-	TreeNode tree_node = tree.getTreeNode();
+	TreeNode* tree_node = tree.getTreeNode();
 	NodeData nd_t = tree_node.node_data;
 	assert( nd_t.ID == tree_list[0].tree_id );
 	assert( nd_t.e_data == tree_list[0].name );
@@ -506,6 +547,28 @@ unittest{
 	string html_out = tree.getTreeAsText( );
 	assert( html_out == "<DOCTYPE html><html><head><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
 
-		
+	writeln( "Testing tree editing" );
 
+	//edit the comment node (id=5)
+	TreeNode* tn = tree.getTreeNodeById( 5 );	
+	tn.setData( "An edit took place");
+	
+	html_out = tree.getTreeAsText( );	
+	assert( html_out == "<DOCTYPE html><html><head><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
+
+	//check that the database entry is unchanged
+	auto results = db.execute( "select e_data from doctree where id=5" );
+	foreach (row; results){		
+		assert( "This is my comment" == row.peek!string(0) );
+	}
+	
+	// save to database	
+	tree.flush();
+	
+	//check that the database entry has been updated
+	auto results2 = db.execute( "select e_data from doctree where id=5" );
+	foreach (row; results2){		
+		assert( "An edit took place" == row.peek!string(0) );
+	}
+	
 }
