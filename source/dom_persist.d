@@ -77,10 +77,7 @@ unittest{
 			assert( (*nxt).node_data.type == TreeNodeType.docType );
 			break;
 
-		case 2:
-		case 3:
-		case 5:
-		case 8:
+		case 2,3,5,8:
 			assert( (*nxt).node_data.type == TreeNodeType.element );
 			break;
 
@@ -88,8 +85,7 @@ unittest{
 			assert( (*nxt).node_data.type == TreeNodeType.comment );
 			break;
 
-		case 6:
-		case 7:
+		case 6,7:
 			assert( (*nxt).node_data.type == TreeNodeType.text );
 			break;
 
@@ -113,7 +109,7 @@ Database db_create( string sqlite_filename, int db_ver ){
 	
 	auto db = Database( sqlite_filename );
 	db.run("CREATE TABLE \"Params\"(\"ID\" INTEGER, \"Name\"	TEXT NOT NULL UNIQUE, \"Val\"	TEXT,	PRIMARY KEY(\"ID\" AUTOINCREMENT))");
-	db.run("Insert into params(Name, Val) values('DB_VERSION','"~to!string(db_ver)~"')");
+	db.run("insert into params(Name, Val) values('DB_VERSION','"~to!string(db_ver)~"')");
 	return db;
 }
 
@@ -265,7 +261,7 @@ class Tree_Db_Base {
 			//we might store the extra data as an attribute but this will suffice for the moment
 			node_data = "DOCTYPE "~node_data;
 		}
-		db.run( format("Insert into doctree(e_data, p_id, t_id, tree_id, c_odr ) values( '%s', %d, %d, %d, %d )", node_data, pid, nt, tree_id, node_count ) );
+		db.run( format("insert into doctree(e_data, p_id, t_id, tree_id, c_order ) values( '%s', %d, %d, %d, %d )", node_data, pid, nt, tree_id, node_count ) );
 		node_count+=1;
 		return db.lastInsertRowid;		
 	}
@@ -279,7 +275,7 @@ class Tree_Db_Base {
 	}
 	
 	void db_create_schema( ){		
-		db.run("CREATE TABLE IF NOT EXISTS doctree (ID INTEGER, e_data	TEXT,p_id INTEGER,t_id INTEGER NOT NULL,tree_id INTEGER NOT NULL,	c_odr INTEGER NOT NULL, PRIMARY KEY( ID AUTOINCREMENT))");
+		db.run("CREATE TABLE IF NOT EXISTS doctree (ID INTEGER, e_data	TEXT,p_id INTEGER,t_id INTEGER NOT NULL,tree_id INTEGER NOT NULL,	c_order INTEGER, PRIMARY KEY( ID AUTOINCREMENT))");
 	}
 	
 	long getRootId(){
@@ -465,7 +461,7 @@ class Tree_Db {
 		//also order by the parent_id so that we know all siblings are grouped together
 		//and then by child order
 	
-		auto results = db.execute( format("select ID, e_data, p_id, t_id from doctree where tree_id=%d or id=%d order by p_id,c_odr", tid, tid) );
+		auto results = db.execute( format("select ID, e_data, p_id, t_id from doctree where tree_id=%d or id=%d order by p_id,c_order", tid, tid) );
 		foreach (row; results){
 			
 			long id = row.peek!long(0);
@@ -531,11 +527,12 @@ class Tree_Db {
 	 */
 	void insertChild( TreeNode* p_node, TreeNodeType n_type, string e_data, int pos ){
 				
-	/* Insert new node:
-		add into the correct place, assign a new id <=-1. 
+		/* Algorithm:
+		add into the correct place in ram, assign a new id <=-1. 
 		An ID is required to add to the map. Using negative IDs indicates that it is not a DB ID.
-		Increment the order_id of following sibling nodes
-		Mark the TreeNode parent as dirty indicating that children need adding and re-ordering*/
+		Mark the TreeNode parent as dirty indicating that children need adding and re-ordering
+		flush: insert (into db) all nodes first then set c_order column for those with dirty parents(!)
+		*/
 	
 		long id = getNextNodeId();
 		TreeNode tn = TreeNode( 
@@ -561,11 +558,14 @@ class Tree_Db {
 		DocOrderIterator it = new DocOrderIterator( &all_nodes[tree_id] );
 		TreeNode* tnode;
 		while( (tnode=it.nextNode) !is null ){
-			NodeData nd = tnode.node_data;
 			
+			NodeData* nd = &tnode.node_data;
+			//writeln("todo create:", nd );
+				
 			//first we check the ID<0 which implies it is a new node
 			if( nd.ID<0 ){
-				writeln("todo create:", nd );
+				db.run( format("insert into doctree(e_data, p_id, t_id, tree_id ) values( '%s', %d, %d, %d )", nd.e_data, nd.pid, nd.type, tree_id ) );
+				nd.ID = db.lastInsertRowid;
 				
 			}else if( nd.dirty ){
 				db.run( format("update doctree set e_data='%s' where id=%d", nd.e_data, nd.ID ) );
@@ -573,6 +573,16 @@ class Tree_Db {
 			}
 		}
 
+		//Re-enumerate any children that have shifted positions (or are new) according to their array positions
+		it.reset();
+		while( (tnode=it.nextNode) !is null ){
+			if( tnode.dirty ){
+				foreach( i, cNode; tnode.child_nodes){
+					db.run( format("update doctree set c_order=%d where id=%d", i, cNode.node_data.ID ) );
+				}
+				tnode.dirty = false;
+			}
+		}
 	}
 
 	protected:
@@ -596,13 +606,7 @@ class Tree_Db {
 	
 }
 /*
- 
- Insert new node:
-	add into the correct place, assign a new id <=-1. 
-	An ID is required to add to the map. Using negative IDs indicates that it is not a DB ID.
-	Increment the order_id of following sibling nodes
-	Mark the TreeNode parent as dirty indicating that children need adding and re-ordering
-
+  
  Delete node (branch)
 	If the id<=-1, then it was a new node, unsaved, can be removed entirely
 	Otherwise, move the node and all children into a delete-map.	
@@ -703,10 +707,9 @@ unittest{
 	tree.flush();
 		
 	//check db contents using a new tree
-	/*Tree_Db tree2 = Tree_Db.loadTree( &db, tree_list[0].tree_id );
+	Tree_Db tree2 = Tree_Db.loadTree( &db, tree_list[0].tree_id );
 	html_out = tree2.getTreeAsText( );	
 	assert( html_out == "<DOCTYPE html><html><head><script></script><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
-	*/
 	
 }
 
@@ -722,6 +725,10 @@ class DocOrderIterator {
 	this( TreeNode* n ){
 		start_node = n;
 		next_node = n;
+	}
+	
+	void reset(){
+		next_node = start_node;		
 	}
 	
 	/**
