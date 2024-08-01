@@ -398,7 +398,32 @@ class Tree_Db {
 	}
 	
 }
+/*
+ 
+ Edit node:
+	No attributes at this stage so only editing the e_data field.
+	Add dirty field to NodeData and mark accordingly
+	
+ Insert new node:
+	add into the correct place, assign a new id <=-1. 
+	An ID is required to add to the map. Using negative IDs indicates that it is not a DB ID.
+	Increment the order_id of following sibling nodes
+	Mark the TreeNode parent as dirty indicating that children need adding and re-ordering
 
+ Delete node (branch)
+	If the id<=-1, then it was a new node, unsaved, can be removed entirely
+	Otherwise, move the node and all children into a delete-map.	
+	Mark the TreeNode parent as dirty indicating that children need removing. Re-ordering is
+	not required but may be advantageous
+	
+ Move node
+	Move the node and all children into new parent (same parent also works)
+	Mark old parent TreeNode as dirty indicating a re-order is necessary, re-order ram children
+	Mark new parent TreeNode as dirty indicating a re-order is necessary, re-order ram children
+	update parent id of moved child
+	
+ */ 
+ 
 unittest{
 
 	auto db = Database( sqlite_filename );
