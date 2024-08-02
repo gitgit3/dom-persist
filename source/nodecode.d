@@ -1,13 +1,7 @@
 module nodecode;
 
-import std.file;
-import std.array;	//https://dlang.org/phobos/std_array.html
-import std.algorithm; //https://dlang.org/phobos/std_algorithm_mutation.html
-import std.conv;
-import std.stdio;
-import std.format;
-import std.exception : enforce;
 import std.traits;
+import std.format;
 
 import dom_persist;
 

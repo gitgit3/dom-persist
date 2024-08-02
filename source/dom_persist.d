@@ -1,13 +1,15 @@
 module dom_persist;
 
-import std.file;
-import std.array;	//https://dlang.org/phobos/std_array.html
-import std.algorithm; //https://dlang.org/phobos/std_algorithm_mutation.html
-import std.conv;
+//import std.algorithm; //https://dlang.org/phobos/std_algorithm_mutation.html
+//import std.exception : enforce;
+
 import std.stdio;
+import std.file;
 import std.format;
-import std.exception : enforce;
-import std.traits;
+import std.array;	//https://dlang.org/phobos/std_array.html
+import std.conv;
+
+
 import nodecode;
 
 import d2sqlite3;	// https://d2sqlite3.dpldocs.info/v1.0.0/d2sqlite3.database.Database.this.html

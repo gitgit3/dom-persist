@@ -1,13 +1,6 @@
 module dom_persist_tests;
 
-import std.file;
-import std.array;	//https://dlang.org/phobos/std_array.html
-import std.algorithm; //https://dlang.org/phobos/std_algorithm_mutation.html
-import std.conv;
 import std.stdio;
-import std.format;
-import std.exception : enforce;
-import std.traits;
 
 import dom_persist;
 import nodecode;
