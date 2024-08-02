@@ -28,10 +28,11 @@ unittest {
 	assert( db_exists( sqlite_filename ) );	
 	assert(db.tableColumnMetadata("params", "ID") == TableColumnMetadata("INTEGER", "BINARY", false, true, true));
 
-	Tree_Db_Base tdb = new Tree_Db_Base( db );
-	tdb.db_create_schema( );
-	
+	Tree_Db.db_create_schema( db );
 	assert(db.tableColumnMetadata("doctree", "ID") == TableColumnMetadata("INTEGER", "BINARY", false, true, true));
+
+
+	Tree_Db_Base tdb = new Tree_Db_Base( db );	
 	
 	long tree_id = tdb.create_tree("mytree");
 	
@@ -56,11 +57,28 @@ unittest {
 
 unittest{
 
+	auto db = Database( sqlite_filename );
+	Tree_Db tree = Tree_Db.createTree( db, "mytree-new" );
+
+	TreeNode* tree_node = tree.getTreeNode();
+	NodeData nd = tree_node.node_data;
+	
+	assert( nd.pid == 0);
+	assert( nd.e_data == "mytree-new");
+	
+	// flush the empty tree
+	tree.flush();
+
+}
+
+
+unittest{
+
 	writeln( "Testing DocOrderIterator" );
 
 	auto db = Database( sqlite_filename );
 	TreeNameID[] tree_list = Tree_Db.getTreeList( db );	
-	Tree_Db tree = Tree_Db.loadTree( &db, tree_list[0].tree_id );
+	Tree_Db tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
 	
 	TreeNode* tree_node = tree.getTreeNode();
 	
@@ -274,10 +292,6 @@ class Tree_Db_Base {
 		db=null;
 	}
 	
-	void db_create_schema( ){		
-		db.run("CREATE TABLE IF NOT EXISTS doctree (ID INTEGER, e_data	TEXT,p_id INTEGER,t_id INTEGER NOT NULL,tree_id INTEGER NOT NULL,	c_order INTEGER, PRIMARY KEY( ID AUTOINCREMENT))");
-	}
-	
 	long getRootId(){
 		return -1;
 	}
@@ -444,42 +458,70 @@ struct TreeNode {
  */
 class Tree_Db {
 
-	protected:
-	
-	long tree_id;
-	Database* db;
-	long nnid = 0;		
-	
-	TreeNode[long]	all_nodes;
-		
-		
-	this( Database* db, long tid ){
-		this.db = db;
-		tree_id = tid;
+
+	private:
+
+		this( Database* db, long tid, string tree_name = null ){
 			
-		//load the tree in one hit using the tree_id
-		//also order by the parent_id so that we know all siblings are grouped together
-		//and then by child order
-	
-		auto results = db.execute( format("select ID, e_data, p_id, t_id from doctree where tree_id=%d or id=%d order by p_id,c_order", tid, tid) );
-		foreach (row; results){
+			this.db = db;
 			
-			long id = row.peek!long(0);
-			long p_id = row.peek!long(2);
-			TreeNode tn = TreeNode( this, NodeData(
-				id,
-				row.peek!string(1),
-				p_id,
-				getTreeNodeType( row.peek!int(3) )
-			));
-			all_nodes[id] = tn;
-			if(p_id==0) continue;
-			all_nodes[p_id].child_nodes ~= &all_nodes[id];
+			if(tid==0){
+				//new tree
+				tree_id = getNextNodeId();
+				TreeNode tn = TreeNode( 
+					this, 
+					NodeData( tree_id, tree_name, 0, TreeNodeType.tree)
+				);
+				this.all_nodes[ tree_id ] = tn;
+				return;
+			}
+			
+			tree_id = tid;
+				
+			//load the tree in one hit using the tree_id
+			//also order by the parent_id so that we know all siblings are grouped together
+			//and then by child order
+		
+			auto results = db.execute( format("select ID, e_data, p_id, t_id from doctree where tree_id=%d or id=%d order by p_id,c_order", tid, tid) );
+			foreach (row; results){
+				
+				long id = row.peek!long(0);
+				long p_id = row.peek!long(2);
+				TreeNode tn = TreeNode( this, NodeData(
+					id,
+					row.peek!string(1),
+					p_id,
+					getTreeNodeType( row.peek!int(3) )
+				));
+				all_nodes[id] = tn;
+				if(p_id==0) continue;
+				all_nodes[p_id].child_nodes ~= &all_nodes[id];
+			}
 		}
-	}
 	
+	// end private
+	
+	protected:
+		
+		long tree_id;
+		Database* db;
+		long nnid = 0;		
+		
+		TreeNode[long]	all_nodes;
+
+		long getNextNodeId(){
+			nnid -= 1;
+			return nnid;
+		}
+		
+	// end protected
+
 	public:
 	
+	static void db_create_schema( ref Database db ){		
+		db.run("CREATE TABLE IF NOT EXISTS doctree (ID INTEGER, e_data	TEXT,p_id INTEGER,t_id INTEGER NOT NULL,tree_id INTEGER NOT NULL,	c_order INTEGER, PRIMARY KEY( ID AUTOINCREMENT))");
+	}
+
 	/**
 	 * Return a list of all trees in the database with their ID's and names.
 	 */
@@ -497,19 +539,36 @@ class Tree_Db {
 		return tree_list;		
 	}
 	
-	static Tree_Db loadTree( Database* db, long tid ){
-		return new Tree_Db( db, tid );		
+	/**
+	 * Create a new tree in RAM. No database activity takes place at this time.
+	 */
+	static Tree_Db createTree( ref Database db, string tree_name ){
+		return new Tree_Db( &db, 0, tree_name );		
 	}
+
+	/**
+	 * Load a tree into RAM from database given the tree ID.
+	 */
+	static Tree_Db loadTree( ref Database db, long tree_id ){
+		return new Tree_Db( &db, tree_id );		
+	}	
 	
-	long getNextNodeId(){
-		nnid -= 1;
-		return nnid;
-	}
-	
+	/**
+	 * Returns the root node of this tree. This is special node holds the tree name and ID and is not
+	 * usually part of the document but rather the parent container.
+	 */
 	TreeNode* getTreeNode(){
 		return &all_nodes[tree_id];
 	}
 
+	/**
+	 * Return any node given its ID. 
+	 * 
+	 * Note about IDs:
+	 * 	positive IDs indicate that the record exists on the database and the ID is the database ID of that node.
+	 * 	negative IDs indicate that the record is a new one existing in RAM only until such times as 'flush' is called.
+	 * 
+	 */
 	TreeNode* getTreeNodeById( long id ){
 		return &all_nodes[id];
 	}
@@ -555,6 +614,8 @@ class Tree_Db {
 		// nodes must be written in document order so that a valid database ID is always available as a parent
 		//ID for subsequent child writes. This is because the child update will write
 
+		long new_tree = tree_id<0;
+
 		DocOrderIterator it = new DocOrderIterator( &all_nodes[tree_id] );
 		TreeNode* tnode;
 		while( (tnode=it.nextNode) !is null ){
@@ -562,10 +623,21 @@ class Tree_Db {
 			NodeData* nd = &tnode.node_data;
 			//writeln("todo create:", nd );
 				
-			//first we check the ID<0 which implies it is a new node
+			//first we check the ID<0 which implies it is a new node	
 			if( nd.ID<0 ){
+
+				if(new_tree) tree_id=0;
 				db.run( format("insert into doctree(e_data, p_id, t_id, tree_id ) values( '%s', %d, %d, %d )", nd.e_data, nd.pid, nd.type, tree_id ) );
+
+				//update the node id
+				long old_id = nd.ID; 
 				nd.ID = db.lastInsertRowid;
+				if(new_tree) tree_id = nd.ID;
+				
+				//update the map
+				TreeNode tn = all_nodes[old_id];
+				all_nodes[nd.ID] = tn;
+				all_nodes.remove(old_id);
 				
 			}else if( nd.dirty ){
 				db.run( format("update doctree set e_data='%s' where id=%d", nd.e_data, nd.ID ) );
@@ -629,9 +701,9 @@ unittest{
 	auto db = Database( sqlite_filename );
 		
 	TreeNameID[] tree_list = Tree_Db.getTreeList( db );
-	assert( tree_list.length==1 );
+	assert( tree_list.length==2 );
 	
-	Tree_Db tree = Tree_Db.loadTree( &db, tree_list[0].tree_id );
+	Tree_Db tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
 	
 	TreeNode* tree_node = tree.getTreeNode();
 	NodeData nd_t = tree_node.node_data;
@@ -702,7 +774,7 @@ unittest{
 	tree.flush();
 		
 	//check db contents using a new tree
-	Tree_Db tree2 = Tree_Db.loadTree( &db, tree_list[0].tree_id );
+	Tree_Db tree2 = Tree_Db.loadTree( db, tree_list[0].tree_id );
 	html_out = tree2.getTreeAsText( );	
 	assert( html_out == "<DOCTYPE html><html><head><script></script><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
 	
