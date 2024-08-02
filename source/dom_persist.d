@@ -10,15 +10,26 @@ import std.traits;
 
 
 import d2sqlite3;	// https://d2sqlite3.dpldocs.info/v1.0.0/d2sqlite3.database.Database.this.html
+						// https://dlang-community.github.io/d2sqlite3/d2sqlite3.html
 
 version(unittest){	
+
 	//stuff only compiled for unittests
 	string sqlite_filename = "dom_persist_test.db";
+
+	void assertNDRecord( Row row, long id, string e_data, long pid, TreeNodeType tnt ){
+	
+		assert( id == row.peek!long(0) );
+		assert( e_data == row.peek!string(1) );
+		assert( pid == row.peek!long(2) );
+		assert( tnt == getTreeNodeType( row.peek!int(3) ) );
+	
+	}
 }
 
 unittest {
 	
-	writeln( "Testing tree creation (old code)" );
+	writeln( "Testing tree creation" );
 	
 	db_drop( sqlite_filename );
 	assert( !db_exists( sqlite_filename ) );
@@ -31,43 +42,58 @@ unittest {
 	Tree_Db.db_create_schema( db );
 	assert(db.tableColumnMetadata("doctree", "ID") == TableColumnMetadata("INTEGER", "BINARY", false, true, true));
 
-
-	Tree_Db_Base tdb = new Tree_Db_Base( db );	
-	
-	long tree_id = tdb.create_tree("mytree");
-	
-	long nid = tdb.appendChild( tree_id, tree_id, TreeNodeType.docType, "html" );
-	long html_nid = tdb.appendChild( tree_id, tree_id, TreeNodeType.element, "html" );
-	
-	long head_id = tdb.appendChild( tree_id, html_nid, TreeNodeType.element, "head" );
-	tdb.appendChild( tree_id, head_id, TreeNodeType.comment, "This is my comment" );
-	
-	long body_id = tdb.appendChild( tree_id, html_nid, TreeNodeType.element, "body" );
-	tdb.appendChild( tree_id, body_id, TreeNodeType.text, "This is some text" );
-	tdb.appendChild( tree_id, body_id, TreeNodeType.text, " with more text" );
-	tdb.appendChildElement( tree_id, body_id, "input" );
-	
-	string html_out = tdb.getTreeAsText( tree_id );	
-	//writeln( html_out );
-	assert( html_out == "<DOCTYPE html><html><head><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
-	
 	db.close();
-	
+
 }
 
 unittest{
-
+	
 	auto db = Database( sqlite_filename );
-	Tree_Db tree = Tree_Db.createTree( db, "mytree-new" );
+	Tree_Db tree = Tree_Db.createTree( db, "mytree" );
 
-	TreeNode* tree_node = tree.getTreeNode();
+	TreeNode tree_node = tree.getTreeNode();
 	NodeData nd = tree_node.node_data;
 	
 	assert( nd.pid == 0);
-	assert( nd.e_data == "mytree-new");
+	assert( nd.e_data == "mytree");
 	
+	//bDebug_out = true;
+	
+	debug_out("tree_node-1: ", &tree_node);
+
 	// flush the empty tree
 	tree.flush();
+
+	ResultRange results = db.execute( "select ID, e_data, p_id, t_id from doctree where id=1" );
+	Row row = results.front();
+
+	assertNDRecord( row, 1, "mytree", 0, TreeNodeType.tree );
+
+	//bDebug_out = true;
+	
+	debug_out("tree_node-2: ", &tree_node);
+	
+	tree_node.appendChild( TreeNodeType.docType, "html" );
+	auto tn_html = tree_node.appendChild( TreeNodeType.element, "html" );
+	
+	auto tn_head = tn_html.appendChild( TreeNodeType.element, "head" );
+	tn_head.appendChild( TreeNodeType.comment, "This is my comment" );
+	
+	auto tn_body = tn_html.appendChild( TreeNodeType.element, "body" );
+	
+	tn_body.appendChild( TreeNodeType.text, "This is some text" );
+	tn_body.appendChild( TreeNodeType.text, " with more text" );
+	tn_body.appendChild( TreeNodeType.element, "input" );
+	
+	
+	tree.flush();
+
+	//bDebug_out = false;
+
+	string html_out = tree.getTreeAsText( );	
+	//writeln( html_out );
+	assert( html_out == "<DOCTYPE html><html><head><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
+	
 
 }
 
@@ -80,31 +106,31 @@ unittest{
 	TreeNameID[] tree_list = Tree_Db.getTreeList( db );	
 	Tree_Db tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
 	
-	TreeNode* tree_node = tree.getTreeNode();
+	TreeNode tree_node = tree.getTreeNode();
 	
 	DocOrderIterator it = new DocOrderIterator( tree_node );
 	int i=0;
-	TreeNode* nxt;
+	TreeNode nxt;
 	while( (nxt=it.nextNode) !is null ){		
 		switch(i){
 		case 0:
-			assert( (*nxt).node_data.type == TreeNodeType.tree );
+			assert( nxt.node_data.type == TreeNodeType.tree );
 			break;
 			
 		case 1:
-			assert( (*nxt).node_data.type == TreeNodeType.docType );
+			assert( nxt.node_data.type == TreeNodeType.docType );
 			break;
 
 		case 2,3,5,8:
-			assert( (*nxt).node_data.type == TreeNodeType.element );
+			assert( nxt.node_data.type == TreeNodeType.element );
 			break;
 
 		case 4:
-			assert( (*nxt).node_data.type == TreeNodeType.comment );
+			assert( nxt.node_data.type == TreeNodeType.comment );
 			break;
 
 		case 6,7:
-			assert( (*nxt).node_data.type == TreeNodeType.text );
+			assert( nxt.node_data.type == TreeNodeType.text );
 			break;
 
 		default:
@@ -145,159 +171,6 @@ TreeNodeType getTreeNodeType( int tip ){
 	return TreeNodeType.nulltype;
 }
 
-
-
-/**
- * This class provides direct database access to all trees in the database table. You can also obtain from it
- * an instance of class Tree_Dd for a specific tree given its root node id.
- */
-class Tree_Db_Base {
-	
-	protected:
-		Database* db;
-		static long node_count = 0;
-		
-	public:
-	
-	this( ref Database db ){
-		this.db = &db;
-	}
-	
-	/**
-	 * Create a new tree in the tree table and return the ID of the tree node. Note that the tree node is
-	 * the parent of the root node, doctype and maybe other node data.
-	 * 
-	 * The tree node is marked with '0' (zero) since it has no parent.
-	 */
-	long create_tree( string tree_name ){		
-		return appendChild( 0, 0, TreeNodeType.tree, tree_name);
-	}
-	
-	/**
-	 * Read the DOM from this database for the given tree ID (tid) and return as
-	 * an html (or xml) string.
-	 * 
-	 * Note that the tree node (type==0) does not have a string representation.
-	 */
-	string getTreeAsText( long tid ){
-		//NodeData cTree = getChild( tid );	//we don't want to print the 'tree' node
-		return getTreeAsText_r( tid );
-	}
-	
-	string getTreeAsText_r( long tid ){
-		
-		string strRtn = "";
-
-		NodeData[] children = getChildren( tid );
-		foreach( child; children){
-			strRtn ~= get_openTag_commence( child.type, child.e_data );
-			// --> add attributes if required
-			strRtn ~= get_openTag_end( child.type, child.e_data );
-			strRtn ~= getTreeAsText_r( child.ID );
-			strRtn ~= get_closeTag( child.type, child.e_data );
-		}
-		
-		return strRtn;
-	}
-	
-	/**
-	 * Return the (ordered) child node IDs of the given parent_id.
-	 */
-	NodeData[] getChildren( long parent_id ){
-	
-		NodeData[] child_nodes;
-		auto results = db.execute( format("select ID, e_data, p_id, t_id from doctree where p_id=%d", parent_id) );
-		foreach (row; results){
-			
-			//assert(row.length == 3);
-			
-			child_nodes ~= NodeData( 
-				row.peek!long(0),
-				row.peek!string(1),
-				row.peek!long(2),
-				getTreeNodeType( row.peek!int(3) )
-			);
-			
-		}
-		return child_nodes;
-	}
-
-	NodeData getChild( long cid ){
-
-		auto results = db.execute( format("select ID, e_data, p_id, t_id from doctree where id=%d", cid) );
-		foreach (row; results){
-			
-			//assert(row.length == 1);
-			
-			return NodeData( 
-				row.peek!long(0),
-				row.peek!string(1),
-				row.peek!long(2),
-				getTreeNodeType( row.peek!int(3) )
-			);
-			
-		}
-		throw new Exception( format( "Child with ID(%d) not found", cid) );
-
-	}
-
-	/**
-	 * Append a new element to the given parent id (pid)
-	 */
-	long appendChildElement( long tree_id, long pid, string elem_name ){
-		enforce(elem_name!=null && elem_name.length>0 );
-		return appendChild( tree_id, pid, TreeNodeType.element, elem_name );
-	}
-
-	/**
-	 * Append new text to the given parent id (pid).
-	 * Returns the ID of the text node if appended or -1 otherwise.
-	 */
-	long appendChildText( long tree_id, long pid, string text ){
-		if(text==null || text.length==0 ) return -1;
-		return appendChild( tree_id, pid, TreeNodeType.text, text );
-	}
-
-	/**
-	 * Append new text to the given parent id (pid).
-	 * Returns the ID of the text node if appended or -1 otherwise.
-	 */
-	long appendChildComment( long tree_id, long pid, string text ){
-		if(text==null || text.length==0 ) return -1;
-		return appendChild( tree_id, pid, TreeNodeType.comment, text );
-	}
-
-	/**
-	 * Append a new node to the given parent pid.
-	 * node_data is used only for doctype, element and text
-	 * 
-	 * The ID of the new node is returned.
-	 */
-	long appendChild( long tree_id, long pid, TreeNodeType nt, string node_data = "" ){
-		
-		if( nt == TreeNodeType.docType ){
-			//we might store the extra data as an attribute but this will suffice for the moment
-			node_data = "DOCTYPE "~node_data;
-		}
-		db.run( format("insert into doctree(e_data, p_id, t_id, tree_id, c_order ) values( '%s', %d, %d, %d, %d )", node_data, pid, nt, tree_id, node_count ) );
-		node_count+=1;
-		return db.lastInsertRowid;		
-	}
-
-	/**
-	 * Close this object AND the underlying DB connection.
-	 */
-	void close(){
-		db.close();
-		db=null;
-	}
-	
-	long getRootId(){
-		return -1;
-	}
-	
-}
-
 string get_openTag_commence( TreeNodeType nt, string e_data ){
 	
 	switch( nt ){
@@ -308,6 +181,9 @@ string get_openTag_commence( TreeNodeType nt, string e_data ){
 	case TreeNodeType.comment:
 		return "<!--"~e_data;
 		
+	case TreeNodeType.docType:
+		return "<DOCTYPE "~e_data;
+
 	default:
 		return "<"~e_data;
 	}
@@ -379,74 +255,124 @@ struct TreeNameID {
 	string name;
 }
 
-struct TreeNode {
+/**
+ * TreeNode is a class because we need the references to remain valid when we modify containers such as
+ * the hashmap which indexes on ID.
+ * 
+ * If we use a struct, then we need to hold the TreeNode data somewhere in order to use a pointer to the data. If
+ * we move the data, such as updating a map, then all the pointers need to change, or we need pointers to pointers.
+ * Either is not ideal. If we use references, as provided by a class, then the GC will track the references and ensure
+ * that they remain valid. We can move the references knowing that the data remains in place on the heap
+ * 
+ */
+class TreeNode {
 	
 	private:
 	
-	Tree_Db owner_tree;
+		Tree_Db owner_tree;
+
+		/**
+		 * Set the node ID of this treenode. Also sets the parent IDs of all child nodes and updates
+		 * the owner_tree hashmap
+		 */
+		long setNodeId( long nnid ){
+			
+			long oldid = node_data.ID;
+			
+			node_data.ID = nnid;
+			foreach(child; child_nodes ){
+				child.node_data.pid = nnid;
+			}
+			
+			owner_tree.all_nodes[nnid] = this;
+			owner_tree.all_nodes.remove( oldid );
+			
+			return nnid;
+		}
+	
+	
+	// end private
 	
 	public:
 	
-	NodeData 		node_data;
-	TreeNode*[] 	child_nodes;
-	bool				dirty;	// true indicates a change in child_nodes
+		NodeData 		node_data;
+		TreeNode[] 		child_nodes;
+		bool				dirty;	// true indicates a change in child_nodes
 
-	this( Tree_Db owner_tree, NodeData node_data){
-		this.owner_tree = owner_tree;
-		this.node_data = node_data;
-	}
-	
-	/**
-	 * Returns the parent node of this node or null if no parent exists (i.e. tree-root)
-	 */
-	TreeNode* parentNode(){
-		if(node_data.pid==0) return null;
-		return owner_tree.getTreeNodeById( node_data.pid );
-	}
-	
-	/**
-	 * Returns the next sibling of this node or null if none exists
-	 */
-	TreeNode* nextSibling(){
-		if(node_data.pid==0) return null;
-		TreeNode* p_node = owner_tree.getTreeNodeById( node_data.pid );
-		foreach( i, c_node; p_node.child_nodes){
-			if(c_node==&this){
-				if( i == p_node.child_nodes.length-1) return null;
-				return p_node.child_nodes[i+1];
-			}
+		this( Tree_Db owner_tree, NodeData node_data){
+			this.owner_tree = owner_tree;
+			this.node_data = node_data;
 		}
-		throw new Exception("Damaged tree, possibly incorrect parent id for a child.");
-	}
+		
+		/**
+		 * Returns the parent node of this node or null if no parent exists (i.e. tree-root)
+		 */
+		TreeNode parentNode(){
+			if(node_data.pid==0) return null;
+			return owner_tree.getTreeNodeById( node_data.pid );
+		}
+		
+		/**
+		 * Returns the next sibling of this node or null if none exists
+		 */
+		TreeNode nextSibling(){
+			if(node_data.pid==0) return null;
+			
+			//bDebug_out = true;
+			TreeNode p_node = owner_tree.getTreeNodeById( node_data.pid );
+			if(p_node is null){
+				debug_out("(ID,e_data) = ", node_data.ID, node_data.e_data );
+				throw new Exception("oops");
+			}
+			
+			foreach( i, c_node; p_node.child_nodes){
+				if(c_node==this){
+					if( i == p_node.child_nodes.length-1) return null;
+					return p_node.child_nodes[i+1];
+				}
+			}
+			throw new Exception("Damaged tree, possibly incorrect parent id for a child.");
+		}
 
-	bool hasChildNodes(){
-		return child_nodes.length>0;
-	}
+		bool hasChildNodes(){
+			return child_nodes.length>0;
+		}
 
-	TreeNode* firstChild(){
-		if( child_nodes.length==0 ) return null;
-		return child_nodes[0];
-	}
+		TreeNode firstChild(){
+			if( child_nodes.length==0 ) return null;
+			return child_nodes[0];
+		}
 
-	/**
-	 * Set the data for this node.
-	 * 
-	 * The data is interpreted using the type of node. For example, the text content of a text node is
-	 * the data whereas for element types, the data is used to hold the element name.
-	 */
-	void setData( string nData ){
-		node_data.e_data = nData;
-		node_data.dirty = true;
-	}
+		/**
+		 * Set the data for this node.
+		 * 
+		 * The data is interpreted using the type of node. For example, the text content of a text node is
+		 * the data whereas for element types, the data is used to hold the element name.
+		 */
+		void setData( string nData ){
+			node_data.e_data = nData;
+			node_data.dirty = true;
+		}
+		
+		/**
+		 * Insert a new child node at the position indicated.
+		 */
+		TreeNode insertChild( TreeNodeType n_type, string e_data, int pos ){		
+			return owner_tree.insertChild( this, n_type, e_data, pos );		
+		}
+
+		/**
+		 * Append a new child node.
+		 */
+		TreeNode appendChild( TreeNodeType n_type, string e_data ){
+			return owner_tree.insertChild( this, n_type, e_data, cast(int)(child_nodes.length) );
+		}
 	
-	/**
-	 * Insert a new child node at the position indicated.
-	 */
-	void insertChild( TreeNodeType n_type, string e_data, int pos ){		
-		owner_tree.insertChild( &this, n_type, e_data, pos );		
-	}
+	// end public
 	
 }
+
+
 
 /**
  * An instance of this class contains access to a single tree. Tree operations are cached in RAM and only written to
@@ -459,6 +385,21 @@ struct TreeNode {
 class Tree_Db {
 
 
+	protected:
+		
+		long tree_id;
+		Database* db;
+		long nnid = 0;		
+		
+		TreeNode[long]	all_nodes;
+
+		long getNextNodeId(){
+			nnid -= 1;
+			return nnid;
+		}
+		
+	// end protected
+
 	private:
 
 		this( Database* db, long tid, string tree_name = null ){
@@ -468,7 +409,7 @@ class Tree_Db {
 			if(tid==0){
 				//new tree
 				tree_id = getNextNodeId();
-				TreeNode tn = TreeNode( 
+				TreeNode tn = new TreeNode( 
 					this, 
 					NodeData( tree_id, tree_name, 0, TreeNodeType.tree)
 				);
@@ -487,7 +428,7 @@ class Tree_Db {
 				
 				long id = row.peek!long(0);
 				long p_id = row.peek!long(2);
-				TreeNode tn = TreeNode( this, NodeData(
+				TreeNode tn = new TreeNode( this, NodeData(
 					id,
 					row.peek!string(1),
 					p_id,
@@ -495,26 +436,12 @@ class Tree_Db {
 				));
 				all_nodes[id] = tn;
 				if(p_id==0) continue;
-				all_nodes[p_id].child_nodes ~= &all_nodes[id];
+				all_nodes[p_id].child_nodes ~= all_nodes[id];
 			}
 		}
 	
 	// end private
 	
-	protected:
-		
-		long tree_id;
-		Database* db;
-		long nnid = 0;		
-		
-		TreeNode[long]	all_nodes;
-
-		long getNextNodeId(){
-			nnid -= 1;
-			return nnid;
-		}
-		
-	// end protected
 
 	public:
 	
@@ -557,8 +484,8 @@ class Tree_Db {
 	 * Returns the root node of this tree. This is special node holds the tree name and ID and is not
 	 * usually part of the document but rather the parent container.
 	 */
-	TreeNode* getTreeNode(){
-		return &all_nodes[tree_id];
+	TreeNode getTreeNode(){
+		return all_nodes[tree_id];
 	}
 
 	/**
@@ -569,8 +496,12 @@ class Tree_Db {
 	 * 	negative IDs indicate that the record is a new one existing in RAM only until such times as 'flush' is called.
 	 * 
 	 */
-	TreeNode* getTreeNodeById( long id ){
-		return &all_nodes[id];
+	TreeNode getTreeNodeById( long id ){
+		
+		TreeNode* ps = id in all_nodes;
+		if(ps) return all_nodes[id];
+		debug_out("getTreeNodeById: did not find key ", id );
+		return null;
 	}
 
 	/**
@@ -584,7 +515,7 @@ class Tree_Db {
 	/**
 	 * Insert a new child of parent node (p_node) at the position (pos) indicated.
 	 */
-	void insertChild( TreeNode* p_node, TreeNodeType n_type, string e_data, int pos ){
+	TreeNode insertChild( TreeNode p_node, TreeNodeType n_type, string e_data, int pos ){
 				
 		/* Algorithm:
 		add into the correct place in ram, assign a new id <=-1. 
@@ -594,14 +525,15 @@ class Tree_Db {
 		*/
 	
 		long id = getNextNodeId();
-		TreeNode tn = TreeNode( 
+		TreeNode tn = new TreeNode( 
 			this, 
 			NodeData( id, e_data, p_node.node_data.ID, n_type)
 		);
 		
 		this.all_nodes[ id ] = tn;		
-		p_node.child_nodes.insertInPlace( pos, &this.all_nodes[ id ]);
+		p_node.child_nodes.insertInPlace( pos, this.all_nodes[ id ]);
 		p_node.dirty = true;
+		return tn;
 	}
 
 
@@ -614,30 +546,27 @@ class Tree_Db {
 		// nodes must be written in document order so that a valid database ID is always available as a parent
 		//ID for subsequent child writes. This is because the child update will write
 
+		debug_out("flush():");
+
 		long new_tree = tree_id<0;
 
-		DocOrderIterator it = new DocOrderIterator( &all_nodes[tree_id] );
-		TreeNode* tnode;
+		DocOrderIterator it = new DocOrderIterator( all_nodes[tree_id] );
+		TreeNode tnode;
 		while( (tnode=it.nextNode) !is null ){
 			
 			NodeData* nd = &tnode.node_data;
-			//writeln("todo create:", nd );
+			debug_out("next node:", *nd );
 				
 			//first we check the ID<0 which implies it is a new node	
 			if( nd.ID<0 ){
 
 				if(new_tree) tree_id=0;
+				
 				db.run( format("insert into doctree(e_data, p_id, t_id, tree_id ) values( '%s', %d, %d, %d )", nd.e_data, nd.pid, nd.type, tree_id ) );
 
 				//update the node id
-				long old_id = nd.ID; 
-				nd.ID = db.lastInsertRowid;
-				if(new_tree) tree_id = nd.ID;
-				
-				//update the map
-				TreeNode tn = all_nodes[old_id];
-				all_nodes[nd.ID] = tn;
-				all_nodes.remove(old_id);
+				long newID = tnode.setNodeId( db.lastInsertRowid );
+				if(new_tree) tree_id = newID;
 				
 			}else if( nd.dirty ){
 				db.run( format("update doctree set e_data='%s' where id=%d", nd.e_data, nd.ID ) );
@@ -663,13 +592,13 @@ class Tree_Db {
 		
 		string strRtn = "";
 
-		TreeNode*[] children = tn.child_nodes;
+		TreeNode[] children = tn.child_nodes;
 		foreach( child; children){
 			NodeData nd = child.node_data;
 			strRtn ~= get_openTag_commence( nd.type, nd.e_data );
 			// --> add attributes if required
 			strRtn ~= get_openTag_end( nd.type, nd.e_data );
-			strRtn ~= getTreeAsText_r( *child );
+			strRtn ~= getTreeAsText_r( child );
 			strRtn ~= get_closeTag( nd.type, nd.e_data );
 		}
 		
@@ -700,29 +629,32 @@ unittest{
 
 	auto db = Database( sqlite_filename );
 		
+	auto tree2 = Tree_Db.createTree( db, "AnotherTree" );
+	tree2.flush();
+	
 	TreeNameID[] tree_list = Tree_Db.getTreeList( db );
 	assert( tree_list.length==2 );
 	
 	Tree_Db tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
 	
-	TreeNode* tree_node = tree.getTreeNode();
+	TreeNode tree_node = tree.getTreeNode();
 	NodeData nd_t = tree_node.node_data;
 	assert( nd_t.ID == tree_list[0].tree_id );
 	assert( nd_t.e_data == tree_list[0].name );
 	assert( nd_t.pid == 0 );
 	assert( nd_t.type == TreeNodeType.tree );
 
-	TreeNode* html_node;
+	TreeNode html_node;
 	
 	int i=0;
 	foreach( node_ptr; tree_node.child_nodes ){		
 
-		NodeData c_node = (*node_ptr).node_data;
+		NodeData c_node = node_ptr.node_data;
 		
 		switch(i){
 		case 0:
 			assert( c_node.ID == 2 );
-			assert( c_node.e_data == "DOCTYPE html" );
+			assert( c_node.e_data == "html" );
 			assert( c_node.pid == tree_list[0].tree_id );
 			assert( c_node.type == TreeNodeType.docType );
 			break;
@@ -747,7 +679,7 @@ unittest{
 	writeln( "Testing tree element insertion" );
 
 	//get head element
-	TreeNode* tn_head = html_node.child_nodes[0];	
+	TreeNode tn_head = html_node.child_nodes[0];	
 	
 	//add an element to the head at position zero
 	tn_head.insertChild( TreeNodeType.element, "script", 0 );
@@ -758,7 +690,7 @@ unittest{
 	writeln( "Testing tree editing" );
 
 	//edit the comment node (id=5)
-	TreeNode* tn = tree.getTreeNodeById( 5 );	
+	TreeNode tn = tree.getTreeNodeById( 5 );	
 	tn.setData( "An edit took place");
 	
 	html_out = tree.getTreeAsText( );	
@@ -774,8 +706,8 @@ unittest{
 	tree.flush();
 		
 	//check db contents using a new tree
-	Tree_Db tree2 = Tree_Db.loadTree( db, tree_list[0].tree_id );
-	html_out = tree2.getTreeAsText( );	
+	Tree_Db tree3 = Tree_Db.loadTree( db, tree_list[0].tree_id );
+	html_out = tree3.getTreeAsText( );	
 	assert( html_out == "<DOCTYPE html><html><head><script></script><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
 	
 }
@@ -786,10 +718,10 @@ unittest{
  */
 class DocOrderIterator {
 	
-	TreeNode* start_node;
-	TreeNode* next_node;
+	TreeNode start_node;
+	TreeNode next_node;
 	
-	this( TreeNode* n ){
+	this( TreeNode n ){
 		start_node = n;
 		next_node = n;
 	}
@@ -801,11 +733,11 @@ class DocOrderIterator {
 	/**
 	 * The initial TreeNode is the first node to be returned.
 	 */
-	TreeNode* nextNode(){
+	TreeNode nextNode(){
 	
 		//the node we will return this time
-		TreeNode* rtnNode = next_node;
-		if(rtnNode==null) return null;
+		TreeNode rtnNode = next_node;
+		if(rtnNode is null) return null;
 			
 		//now work out the node for the next call
 				
@@ -814,7 +746,7 @@ class DocOrderIterator {
 			return rtnNode;
 		}
 		
-		TreeNode* anc_node = rtnNode;
+		TreeNode anc_node = rtnNode;
 		while( anc_node !is null && anc_node.nextSibling() is null){
 			anc_node = anc_node.parentNode();
 			if( anc_node == start_node ){
@@ -832,4 +764,15 @@ class DocOrderIterator {
 	
 	}
 	
+}
+
+
+bool bDebug_out = false;
+void debug_out(){ writeln(); }
+
+void debug_out(T, A...)(T t, A a){
+    if(!bDebug_out) return;
+    import std.stdio;
+    write(t);
+    debug_out(a);
 }
