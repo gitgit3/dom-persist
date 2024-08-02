@@ -834,7 +834,7 @@ class DocOrderIterator {
 void removeAt(T)( ref T[] t, int pos ){
 	
 	//I really don't like these re-assignments
-	//t = t.remove(i);
+	//t = t.remove(pos);
 	//t = t[0..pos] ~ t[pos+1..$]
 	
 	for( int i=pos; i<t.length-1; i++){
