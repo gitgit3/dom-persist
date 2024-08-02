@@ -2,143 +2,17 @@ module dom_persist;
 
 import std.file;
 import std.array;	//https://dlang.org/phobos/std_array.html
-//import std.algorithm; //https://dlang.org/phobos/std_algorithm_mutation.html
+import std.algorithm; //https://dlang.org/phobos/std_algorithm_mutation.html
 import std.conv;
 import std.stdio;
 import std.format;
 import std.exception : enforce;
 import std.traits;
-
+import nodecode;
 
 import d2sqlite3;	// https://d2sqlite3.dpldocs.info/v1.0.0/d2sqlite3.database.Database.this.html
 						// https://dlang-community.github.io/d2sqlite3/d2sqlite3.html
 
-version(unittest){	
-
-	//stuff only compiled for unittests
-	string sqlite_filename = "dom_persist_test.db";
-
-	void assertNDRecord( Row row, long id, string e_data, long pid, TreeNodeType tnt ){
-	
-		assert( id == row.peek!long(0) );
-		assert( e_data == row.peek!string(1) );
-		assert( pid == row.peek!long(2) );
-		assert( tnt == getTreeNodeType( row.peek!int(3) ) );
-	
-	}
-}
-
-unittest {
-	
-	writeln( "Testing tree creation" );
-	
-	db_drop( sqlite_filename );
-	assert( !db_exists( sqlite_filename ) );
-
-	Database db = db_create( sqlite_filename, 1 );
-
-	assert( db_exists( sqlite_filename ) );	
-	assert(db.tableColumnMetadata("params", "ID") == TableColumnMetadata("INTEGER", "BINARY", false, true, true));
-
-	Tree_Db.db_create_schema( db );
-	assert(db.tableColumnMetadata("doctree", "ID") == TableColumnMetadata("INTEGER", "BINARY", false, true, true));
-
-	db.close();
-
-}
-
-unittest{
-	
-	auto db = Database( sqlite_filename );
-	Tree_Db tree = Tree_Db.createTree( db, "mytree" );
-
-	TreeNode tree_node = tree.getTreeNode();
-	NodeData nd = tree_node.node_data;
-	
-	assert( nd.pid == 0);
-	assert( nd.e_data == "mytree");
-	
-	//bDebug_out = true;
-	
-	debug_out("tree_node-1: ", &tree_node);
-
-	// flush the empty tree
-	tree.flush();
-
-	ResultRange results = db.execute( "select ID, e_data, p_id, t_id from doctree where id=1" );
-	Row row = results.front();
-
-	assertNDRecord( row, 1, "mytree", 0, TreeNodeType.tree );
-
-	//bDebug_out = true;
-	
-	debug_out("tree_node-2: ", &tree_node);
-	
-	tree_node.appendChild( TreeNodeType.docType, "html" );
-	auto tn_html = tree_node.appendChild( TreeNodeType.element, "html" );
-	
-	auto tn_head = tn_html.appendChild( TreeNodeType.element, "head" );
-	tn_head.appendChild( TreeNodeType.comment, "This is my comment" );
-	
-	auto tn_body = tn_html.appendChild( TreeNodeType.element, "body" );
-	
-	tn_body.appendChild( TreeNodeType.text, "This is some text" );
-	tn_body.appendChild( TreeNodeType.text, " with more text" );
-	tn_body.appendChild( TreeNodeType.element, "input" );
-	
-	
-	tree.flush();
-
-	//bDebug_out = false;
-
-	string html_out = tree.getTreeAsText( );	
-	//writeln( html_out );
-	assert( html_out == "<DOCTYPE html><html><head><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
-	
-
-}
-
-
-unittest{
-
-	writeln( "Testing DocOrderIterator" );
-
-	auto db = Database( sqlite_filename );
-	TreeNameID[] tree_list = Tree_Db.getTreeList( db );	
-	Tree_Db tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
-	
-	TreeNode tree_node = tree.getTreeNode();
-	
-	DocOrderIterator it = new DocOrderIterator( tree_node );
-	int i=0;
-	TreeNode nxt;
-	while( (nxt=it.nextNode) !is null ){		
-		switch(i){
-		case 0:
-			assert( nxt.node_data.type == TreeNodeType.tree );
-			break;
-			
-		case 1:
-			assert( nxt.node_data.type == TreeNodeType.docType );
-			break;
-
-		case 2,3,5,8:
-			assert( nxt.node_data.type == TreeNodeType.element );
-			break;
-
-		case 4:
-			assert( nxt.node_data.type == TreeNodeType.comment );
-			break;
-
-		case 6,7:
-			assert( nxt.node_data.type == TreeNodeType.text );
-			break;
-
-		default:
-		}
-		i+=1;
-	}
-}
 
 bool db_exists( string sqlite_filename ){
 	return sqlite_filename.exists;
@@ -158,19 +32,6 @@ Database db_create( string sqlite_filename, int db_ver ){
 	return db;
 }
 
-enum TreeNodeType {
-	nulltype=-2, // indicates a type read from the database which is not one of the recognised types
-	tree=-1, docType, element, text, comment
-}
-
-TreeNodeType getTreeNodeType( int tip ){
-	
-	auto tnts = [EnumMembers!TreeNodeType];
-	foreach( tnt; tnts ){
-		if( tnt==tip ) return tnt;
-	}
-	return TreeNodeType.nulltype;
-}
 
 string get_openTag_commence( TreeNodeType nt, string e_data ){
 	
@@ -235,159 +96,10 @@ string get_closeTag( TreeNodeType nt, string e_data ){
 	
 }
 
-struct NodeData {
-	
-	long ID;
-	string e_data;
-	long pid;
-	TreeNodeType type;
-	bool dirty = false;
-	long orig_pid=0;
-	
-	this( long ID, string e_data, long pid, TreeNodeType type){
-		this.ID = ID;
-		this.e_data = e_data;
-		this.pid = pid;
-		this.type = type;
-	}
-}
-
 struct TreeNameID {
 	long tree_id;
 	string name;
 }
-
-/**
- * TreeNode is a class because we need the references to remain valid when we modify containers such as
- * the hashmap which indexes on ID.
- * 
- * If we use a struct, then we need to hold the TreeNode data somewhere in order to use a pointer to the data. If
- * we move the data, such as updating a map, then all the pointers need to change, or we need pointers to pointers.
- * Either is not ideal. If we use references, as provided by a class, then the GC will track the references and ensure
- * that they remain valid. We can move the references knowing that the data remains in place on the heap
- * 
- */
-class TreeNode {
-	
-	private:
-	
-		Tree_Db owner_tree;
-
-		/**
-		 * Set the node ID of this treenode. Also sets the parent IDs of all child nodes and updates
-		 * the owner_tree hashmap
-		 */
-		long setNodeId( long nnid ){
-			
-			long oldid = node_data.ID;
-			
-			node_data.ID = nnid;
-			foreach(child; child_nodes ){
-				child.node_data.pid = nnid;
-			}
-			
-			owner_tree.all_nodes[nnid] = this;
-			owner_tree.all_nodes.remove( oldid );
-			
-			return nnid;
-		}
-	
-	// end private
-	
-	public:
-	
-		NodeData 		node_data;
-		TreeNode[] 		child_nodes;
-		bool				dirty;	// true indicates a change in child_nodes
-
-		this( Tree_Db owner_tree, NodeData node_data){
-			this.owner_tree = owner_tree;
-			this.node_data = node_data;
-		}
-		
-		/**
-		 * Returns the parent node of this node or null if no parent exists (i.e. tree-root)
-		 */
-		TreeNode parentNode(){
-			if(node_data.pid==0) return null;
-			return owner_tree.getTreeNodeById( node_data.pid );
-		}
-		
-		/**
-		 * Returns the next sibling of this node or null if none exists
-		 */
-		TreeNode nextSibling(){
-			if(node_data.pid==0) return null;
-			
-			//bDebug_out = true;
-			TreeNode p_node = owner_tree.getTreeNodeById( node_data.pid );
-			if(p_node is null){
-				debug_out("(ID,e_data) = ", node_data.ID, node_data.e_data );
-				throw new Exception("oops");
-			}
-			
-			foreach( i, c_node; p_node.child_nodes){
-				if(c_node==this){
-					if( i == p_node.child_nodes.length-1) return null;
-					return p_node.child_nodes[i+1];
-				}
-			}
-			throw new Exception("Damaged tree, possibly incorrect parent id for a child.");
-		}
-
-		bool hasChildNodes(){
-			return child_nodes.length>0;
-		}
-
-		TreeNode firstChild(){
-			if( child_nodes.length==0 ) return null;
-			return child_nodes[0];
-		}
-
-		/**
-		 * Set the data for this node.
-		 * 
-		 * The data is interpreted using the type of node. For example, the text content of a text node is
-		 * the data whereas for element types, the data is used to hold the element name.
-		 */
-		void setData( string nData ){
-			node_data.e_data = nData;
-			node_data.dirty = true;
-		}
-		
-		/**
-		 * Insert a new child node at the position indicated.
-		 */
-		TreeNode insertChild( TreeNodeType n_type, string e_data, int pos ){		
-			return owner_tree.insertChild( this, n_type, e_data, pos );		
-		}
-
-		/**
-		 * Append a new child node.
-		 */
-		TreeNode appendChild( TreeNodeType n_type, string e_data ){
-			return owner_tree.insertChild( this, n_type, e_data, cast(int)(child_nodes.length) );
-		}
-		
-		void moveNode( TreeNode new_p_node, int pos ){
-			owner_tree.moveNode( this, new_p_node, pos );
-		}
-	
-		void cutChild( TreeNode c_node ){
-			foreach( i, child; child_nodes ){
-				if(child == c_node ){
-					removeAt!TreeNode( child_nodes, cast(int)(i) );
-					dirty = true;
-					return;
-				}
-			}
-			throw new Exception( format("Node %d is not a child of node %d ", c_node.node_data.ID, node_data.ID) );
-		}
-				
-	// end public
-	
-}
-
 
 
 /**
@@ -558,7 +270,7 @@ class Tree_Db {
 	 * 
 	 */
 	void moveNode( TreeNode nodeToMove, TreeNode nodeDestParent, int pos ){
-		/* Algorith:
+		/* Algorithm:
 		Move the node and all children into new parent (same parent also works)
 		Mark old parent TreeNode as dirty indicating a re-order is necessary
 		Mark new parent TreeNode as dirty indicating a re-order is necessary
@@ -585,6 +297,17 @@ class Tree_Db {
 		nodeToMove.node_data.pid = nodeDestParent.node_data.ID;
 		nodeToMove.node_data.dirty = true;	//dirty data will suffice for storing pid too
 	}
+
+/*
+ Delete node (branch)
+	If the id<=-1, then it was a new node, unsaved, can be removed entirely
+	Otherwise, move the node and all children into a delete-map.	
+	Mark the TreeNode parent as dirty indicating that children need removing. Re-ordering is
+	not required but may be advantageous
+	flush: Delete entries using the delete-map and clear the map.
+	
+ */ 
+
 	
 	/**
 	 * Save all edits to the tree to the database. After this call, the database values will be in sync
@@ -614,7 +337,13 @@ class Tree_Db {
 				db.run( format("insert into doctree(e_data, p_id, t_id, tree_id ) values( '%s', %d, %d, %d )", nd.e_data, nd.pid, nd.type, tree_id ) );
 
 				//update the node id
-				long newID = tnode.setNodeId( db.lastInsertRowid );
+				long oldid = tnode.node_data.ID;
+				long nnid = db.lastInsertRowid;
+				
+				long newID = tnode.setNodeId( nnid );
+				all_nodes[nnid] = tnode;
+				all_nodes.remove( oldid );
+			
 				if(new_tree) tree_id = newID;
 				
 			}else if( nd.dirty ){
@@ -655,125 +384,6 @@ class Tree_Db {
 		return strRtn;
 	}
 	
-}
-/*
-  
- Delete node (branch)
-	If the id<=-1, then it was a new node, unsaved, can be removed entirely
-	Otherwise, move the node and all children into a delete-map.	
-	Mark the TreeNode parent as dirty indicating that children need removing. Re-ordering is
-	not required but may be advantageous
-	flush: Delete entries using the delete-map and clear the map.
-
- Move node
-	Move the node and all children into new parent (same parent also works)
-	Mark old parent TreeNode as dirty indicating a re-order is necessary, re-order ram children
-	Mark new parent TreeNode as dirty indicating a re-order is necessary, re-order ram children
-	update parent id of moved child
-	
- */ 
- 
-unittest{
-
-	writeln( "Testing tree loading" );
-
-	auto db = Database( sqlite_filename );
-		
-	auto tree2 = Tree_Db.createTree( db, "AnotherTree" );
-	tree2.flush();
-	
-	TreeNameID[] tree_list = Tree_Db.getTreeList( db );
-	assert( tree_list.length==2 );
-	
-	Tree_Db tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
-	
-	TreeNode tree_node = tree.getTreeNode();
-	NodeData nd_t = tree_node.node_data;
-	assert( nd_t.ID == tree_list[0].tree_id );
-	assert( nd_t.e_data == tree_list[0].name );
-	assert( nd_t.pid == 0 );
-	assert( nd_t.type == TreeNodeType.tree );
-
-	TreeNode html_node;
-	
-	int i=0;
-	foreach( node_ptr; tree_node.child_nodes ){		
-
-		NodeData c_node = node_ptr.node_data;
-		
-		switch(i){
-		case 0:
-			assert( c_node.ID == 2 );
-			assert( c_node.e_data == "html" );
-			assert( c_node.pid == tree_list[0].tree_id );
-			assert( c_node.type == TreeNodeType.docType );
-			break;
-
-		case 1:
-			html_node = node_ptr;
-			assert( c_node.ID == 3 );
-			assert( c_node.e_data == "html" );
-			assert( c_node.pid == tree_list[0].tree_id );
-			assert( c_node.type == TreeNodeType.element );
-			break;
-		
-		default:
-		}
-	
-		i+=1;
-	}
-	
-	string html_out = tree.getTreeAsText( );	
-	assert( html_out == "<DOCTYPE html><html><head><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
-
-	writeln( "Testing tree element insertion" );
-
-	//get head element
-	TreeNode tn_head = html_node.child_nodes[0];	
-	
-	//add an element to the head at position zero
-	tn_head.insertChild( TreeNodeType.element, "script", 0 );	
-	
-	html_out = tree.getTreeAsText( );	
-	assert( html_out == "<DOCTYPE html><html><head><script></script><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
-
-	writeln( "Testing tree editing" );
-
-	//edit the comment node (id=5)
-	TreeNode e_comment = tree.getTreeNodeById( 5 );	
-	e_comment.setData( "An edit took place" );
-	
-	html_out = tree.getTreeAsText( );	
-	assert( html_out == "<DOCTYPE html><html><head><script></script><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
-
-	//check that the database entry is unchanged
-	auto results = db.execute( "select e_data from doctree where id=5" );
-	foreach (row; results){		
-		assert( "This is my comment" == row.peek!string(0) );
-	}
-	
-	// save to database	
-	tree.flush();
-		
-	//check db contents using a new tree
-	Tree_Db tree3 = Tree_Db.loadTree( db, tree_list[0].tree_id );
-	html_out = tree3.getTreeAsText( );	
-	assert( html_out == "<DOCTYPE html><html><head><script></script><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
-
-	writeln("Testing moveNode");
-	
-	//use the original tree to test a move the comment node	
-	auto tn_body = tn_head.nextSibling();
-	e_comment.moveNode( tn_body, 0 );
-	html_out = tree.getTreeAsText( );	
-	assert( html_out == "<DOCTYPE html><html><head><script></script></head><body><!--An edit took place-->This is some text with more text<input/></body></html>");
-	
-	//test that it flushes correctly
-	tree.flush();
-	auto result = db.execute( "select id, e_data, p_id, t_id from doctree where id=5" );		
-	assertNDRecord( result.front(), 5, "An edit took place", tn_body.node_data.ID, TreeNodeType.comment );
-	
-	writeln("TODO: Test multiple moveNode");		
 }
 
 
@@ -830,17 +440,26 @@ class DocOrderIterator {
 	
 }
 
-
 void removeAt(T)( ref T[] t, int pos ){
 	
-	//I really don't like these re-assignments
-	//t = t.remove(pos);
-	//t = t[0..pos] ~ t[pos+1..$]
+	// tests on a 10000 item array
+
+	//I really don't like these re-assignments but the ref makes it stay in-place
 	
-	for( int i=pos; i<t.length-1; i++){
+	// by far the fastest
+	// 15290 cpu cycles	
+	t = t[0..pos] ~ t[pos+1..$];
+	
+	// my implementation cpu 116100 cycles
+	/*for( int i=pos; i<t.length-1; i++){
 		t[i] = t[i+1];
 	}
 	t.length -= 1;
+	*/
+
+	// by far the slowest 154000 cpu cycles
+	//t = t.remove(pos);					
+
 }
 
 
@@ -853,3 +472,4 @@ void debug_out(T, A...)(T t, A a){
     write(t);
     debug_out(a);
 }
+
