@@ -2,6 +2,7 @@ module dom_persist;
 
 import std.file;
 import std.array;	//https://dlang.org/phobos/std_array.html
+//import std.algorithm; //https://dlang.org/phobos/std_algorithm_mutation.html
 import std.conv;
 import std.stdio;
 import std.format;
@@ -241,6 +242,7 @@ struct NodeData {
 	long pid;
 	TreeNodeType type;
 	bool dirty = false;
+	long orig_pid=0;
 	
 	this( long ID, string e_data, long pid, TreeNodeType type){
 		this.ID = ID;
@@ -289,7 +291,6 @@ class TreeNode {
 			
 			return nnid;
 		}
-	
 	
 	// end private
 	
@@ -367,7 +368,22 @@ class TreeNode {
 		TreeNode appendChild( TreeNodeType n_type, string e_data ){
 			return owner_tree.insertChild( this, n_type, e_data, cast(int)(child_nodes.length) );
 		}
+		
+		void moveNode( TreeNode new_p_node, int pos ){
+			owner_tree.moveNode( this, new_p_node, pos );
+		}
 	
+		void cutChild( TreeNode c_node ){
+			foreach( i, child; child_nodes ){
+				if(child == c_node ){
+					removeAt!TreeNode( child_nodes, cast(int)(i) );
+					dirty = true;
+					return;
+				}
+			}
+			throw new Exception( format("Node %d is not a child of node %d ", c_node.node_data.ID, node_data.ID) );
+		}
+				
 	// end public
 	
 }
@@ -391,7 +407,7 @@ class Tree_Db {
 		Database* db;
 		long nnid = 0;		
 		
-		TreeNode[long]	all_nodes;
+		TreeNode[long]	all_nodes;  //https://dlang.org/spec/hash-map.html
 
 		long getNextNodeId(){
 			nnid -= 1;
@@ -513,7 +529,7 @@ class Tree_Db {
 
 
 	/**
-	 * Insert a new child of parent node (p_node) at the position (pos) indicated.
+	 * Create and insert a new child into the parent node (p_node) at the position (pos) indicated.
 	 */
 	TreeNode insertChild( TreeNode p_node, TreeNodeType n_type, string e_data, int pos ){
 				
@@ -536,7 +552,40 @@ class Tree_Db {
 		return tn;
 	}
 
-
+	/**
+	 * Move the given node (nodeToMove) to the new parent (nodeDestParent) inserting at position pos.
+	 * Currently only works for node relocation within the same tree.
+	 * 
+	 */
+	void moveNode( TreeNode nodeToMove, TreeNode nodeDestParent, int pos ){
+		/* Algorith:
+		Move the node and all children into new parent (same parent also works)
+		Mark old parent TreeNode as dirty indicating a re-order is necessary
+		Mark new parent TreeNode as dirty indicating a re-order is necessary
+		update parent id of moved child
+		flush: locate the node using it's original id except if negative
+				update the db with the new ID and set orig_id=0;
+		*/
+		
+		// 1st remove node
+		auto old_p = nodeToMove.parentNode();
+		if(nodeDestParent == old_p){
+			// same parent, nothing to do except move in-place and re-order
+			old_p.cutChild( nodeToMove );
+			old_p.child_nodes.insertInPlace( pos, nodeToMove );
+			old_p.dirty = true;
+			return;
+		}
+		
+		old_p.cutChild( nodeToMove );
+				
+		// add node to new parent
+		nodeDestParent.child_nodes.insertInPlace( pos, nodeToMove );
+		nodeDestParent.dirty = true;
+		nodeToMove.node_data.pid = nodeDestParent.node_data.ID;
+		nodeToMove.node_data.dirty = true;	//dirty data will suffice for storing pid too
+	}
+	
 	/**
 	 * Save all edits to the tree to the database. After this call, the database values will be in sync
 	 * with the memory tree.
@@ -569,7 +618,8 @@ class Tree_Db {
 				if(new_tree) tree_id = newID;
 				
 			}else if( nd.dirty ){
-				db.run( format("update doctree set e_data='%s' where id=%d", nd.e_data, nd.ID ) );
+				//dirty data and possibly pid too
+				db.run( format("update doctree set e_data='%s', p_id=%d where id=%d", nd.e_data, nd.pid, nd.ID ) );
 				nd.dirty = false;
 			}
 		}
@@ -682,7 +732,7 @@ unittest{
 	TreeNode tn_head = html_node.child_nodes[0];	
 	
 	//add an element to the head at position zero
-	tn_head.insertChild( TreeNodeType.element, "script", 0 );
+	tn_head.insertChild( TreeNodeType.element, "script", 0 );	
 	
 	html_out = tree.getTreeAsText( );	
 	assert( html_out == "<DOCTYPE html><html><head><script></script><!--This is my comment--></head><body>This is some text with more text<input/></body></html>");
@@ -690,8 +740,8 @@ unittest{
 	writeln( "Testing tree editing" );
 
 	//edit the comment node (id=5)
-	TreeNode tn = tree.getTreeNodeById( 5 );	
-	tn.setData( "An edit took place");
+	TreeNode e_comment = tree.getTreeNodeById( 5 );	
+	e_comment.setData( "An edit took place" );
 	
 	html_out = tree.getTreeAsText( );	
 	assert( html_out == "<DOCTYPE html><html><head><script></script><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
@@ -709,7 +759,21 @@ unittest{
 	Tree_Db tree3 = Tree_Db.loadTree( db, tree_list[0].tree_id );
 	html_out = tree3.getTreeAsText( );	
 	assert( html_out == "<DOCTYPE html><html><head><script></script><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
+
+	writeln("Testing moveNode");
 	
+	//use the original tree to test a move the comment node	
+	auto tn_body = tn_head.nextSibling();
+	e_comment.moveNode( tn_body, 0 );
+	html_out = tree.getTreeAsText( );	
+	assert( html_out == "<DOCTYPE html><html><head><script></script></head><body><!--An edit took place-->This is some text with more text<input/></body></html>");
+	
+	//test that it flushes correctly
+	tree.flush();
+	auto result = db.execute( "select id, e_data, p_id, t_id from doctree where id=5" );		
+	assertNDRecord( result.front(), 5, "An edit took place", tn_body.node_data.ID, TreeNodeType.comment );
+	
+	writeln("TODO: Test multiple moveNode");		
 }
 
 
@@ -764,6 +828,19 @@ class DocOrderIterator {
 	
 	}
 	
+}
+
+
+void removeAt(T)( ref T[] t, int pos ){
+	
+	//I really don't like these re-assignments
+	//t = t.remove(i);
+	//t = t[0..pos] ~ t[pos+1..$]
+	
+	for( int i=pos; i<t.length-1; i++){
+		t[i] = t[i+1];
+	}
+	t.length -= 1;
 }
 
 
