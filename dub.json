@@ -1,0 +1,13 @@
+{
+	"authors": [
+		"John Pearcey"
+	],
+	"copyright": "Copyright © 2024, John Pearcey",
+	"dependencies": {
+		"console-colors": "~>1.3.1",
+		"d2sqlite3": "~>1.0.0"
+	},
+	"description": "Persist Html/Dom to file with element indexing",
+	"license": "proprietary",
+	"name": "dom_persist"
+}

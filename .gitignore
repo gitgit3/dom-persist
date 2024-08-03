@@ -1,0 +1,15 @@
+.dub
+docs.json
+docs/
+/dom_persist
+dom_persist.so
+dom_persist.dylib
+dom_persist.dll
+libdom_persist.a
+dom_persist.lib
+dom_persist-test-*
+*.exe
+*.o
+*.obj
+*.lst
+*.db
