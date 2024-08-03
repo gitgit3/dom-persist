@@ -4,6 +4,7 @@ import std.stdio;
 
 import dom_persist;
 import nodecode;
+import consolecolors; //https://code.dlang.org/packages/console-colors/1.1.2
 
 import d2sqlite3;	// https://d2sqlite3.dpldocs.info/v1.0.0/d2sqlite3.database.Database.this.html
 						// https://dlang-community.github.io/d2sqlite3/d2sqlite3.html
@@ -69,7 +70,7 @@ unittest{
 	auto db = Database( sqlite_filename );
 	Tree_Db tree = Tree_Db.createTree( db, "mytree" );
 
-	TreeNode tree_node = tree.getTreeNode();
+	TreeNode tree_node = tree.getTreeRoot();
 	NodeData nd = tree_node.node_data;
 	
 	assert( nd.pid == 0);
@@ -124,7 +125,7 @@ unittest{
 	TreeNameID[] tree_list = Tree_Db.getTreeList( db );	
 	Tree_Db tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
 	
-	TreeNode tree_node = tree.getTreeNode();
+	TreeNode tree_node = tree.getTreeRoot();
 	
 	DocOrderIterator it = new DocOrderIterator( tree_node );
 	int i=0;
@@ -171,7 +172,7 @@ unittest{
 	
 	Tree_Db tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
 	
-	TreeNode tree_node = tree.getTreeNode();
+	TreeNode tree_node = tree.getTreeRoot();
 	NodeData nd_t = tree_node.node_data;
 	assert( nd_t.ID == tree_list[0].tree_id );
 	assert( nd_t.e_data == tree_list[0].name );
@@ -257,11 +258,45 @@ unittest{
 	auto result = db.execute( "select id, e_data, p_id, t_id from doctree where id=5" );		
 	assertNDRecord( result.front(), 5, "An edit took place", tn_body.node_data.ID, TreeNodeType.comment );
 	
-	writeln("TODO: Test multiple moveNode");		
+	cwriteln("<red>TODO:</red> Test multiple moveNode");		
 }
 
-
 unittest{
+	
+	writeln( "Testing tree element deletion" );
+
+
+	auto db = Database( sqlite_filename );
+	
+	TreeNameID[] tree_list = Tree_Db.getTreeList( db );
+	assert( tree_list.length==2 );
+	
+	Tree_Db tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
+	string html_out = tree.getTreeAsText( );	
+	//writeln( html_out );
+	assert( html_out == "<DOCTYPE html><html><head><script></script></head><body><!--An edit took place-->This is some text with more text<input/></body></html>");
+	
+	TreeNode tn_head = tree.getTreeRoot().getChildAt(1).getChildAt(0);
+	tn_head.getChildAt(0).deleteNode();	//delete the script node
+	
+	html_out = tree.getTreeAsText( );	
+	assert( html_out == "<DOCTYPE html><html><head></head><body><!--An edit took place-->This is some text with more text<input/></body></html>");
+	
+	//check that the database record still exists
+	auto result = db.execute( "select id, e_data, p_id, t_id from doctree where id=11" );		
+	assertNDRecord( result.front(), 11, "script", tn_head.node_data.ID, TreeNodeType.element );
+	
+	tree.flush();
+	
+	//reload and check
+	tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
+	html_out = tree.getTreeAsText( );	
+	assert( html_out == "<DOCTYPE html><html><head></head><body><!--An edit took place-->This is some text with more text<input/></body></html>");
+	
+			
+}
+
+/*unittest{
 
 
 	int[] a1;
@@ -277,5 +312,4 @@ unittest{
 			removeAt!int( a1, 0 );
 		}
 	}
-	
-}
+}*/

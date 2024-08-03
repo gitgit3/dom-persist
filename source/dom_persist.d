@@ -122,6 +122,7 @@ class Tree_Db {
 		long nnid = 0;		
 		
 		TreeNode[long]	all_nodes;  //https://dlang.org/spec/hash-map.html
+		TreeNode[long]	nodes_to_delete;
 
 		long getNextNodeId(){
 			nnid -= 1;
@@ -214,7 +215,7 @@ class Tree_Db {
 	 * Returns the root node of this tree. This is special node holds the tree name and ID and is not
 	 * usually part of the document but rather the parent container.
 	 */
-	TreeNode getTreeNode(){
+	TreeNode getTreeRoot(){
 		return all_nodes[tree_id];
 	}
 
@@ -300,15 +301,30 @@ class Tree_Db {
 		nodeToMove.node_data.dirty = true;	//dirty data will suffice for storing pid too
 	}
 
-/*
- Delete node (branch)
-	If the id<=-1, then it was a new node, unsaved, can be removed entirely
-	Otherwise, move the node and all children into a delete-map.	
-	Mark the TreeNode parent as dirty indicating that children need removing. Re-ordering is
-	not required but may be advantageous
-	flush: Delete entries using the delete-map and clear the map.
-	
- */ 
+	void deleteNode( TreeNode nodeToDelete ){
+		/* Algorithm:
+			If the id<=-1, then it was a new node, unsaved, can be removed entirely
+			Otherwise, move the node and all children into a delete-map.	
+			Mark the TreeNode parent as dirty indicating that children need removing. Re-ordering is
+			not required but may be advantageous
+			flush: Delete entries using the delete-map and clear the delete-map.
+		 */ 
+		
+		nodeToDelete.parentNode().cutChild( nodeToDelete );
+		if(nodeToDelete.node_data.ID>0){
+			//a persisted node, move to a delete map
+			nodes_to_delete[ nodeToDelete.node_data.ID ] = nodeToDelete;
+		}
+
+		//remove the node (and all its descendents) from the all_nodes map
+		DocOrderIterator it = new DocOrderIterator( nodeToDelete );
+		TreeNode tnode;
+		while( (tnode=it.nextNode) !is null ){
+			long key = tnode.node_data.ID;
+			all_nodes.remove(key);
+		}
+		
+	}
 
 	
 	/**
@@ -354,6 +370,39 @@ class Tree_Db {
 				nd.dirty = false;
 			}
 		}
+
+		//collect together all nodes and their children specified in the nodes_to_delete map which have a database ID
+		long[] del_all;
+		foreach( key; nodes_to_delete.keys() ){
+			
+			if(key>0)	del_all ~= key;
+			
+			TreeNode nodeToDelete = nodes_to_delete[key];
+			
+			DocOrderIterator it2 = new DocOrderIterator( nodeToDelete );
+			TreeNode tnode2;
+			while( (tnode2=it2.nextNode) !is null ){
+				if(tnode2.node_data.ID>0)	del_all ~= tnode2.node_data.ID;
+			}
+		}
+		
+		{	//now delete all children from the DB (all have positive keys)
+			int i=0;
+			string sql = "delete from doctree";
+			foreach( key; del_all ){
+				if(i==0){
+					sql ~= " where";
+				}else{
+					sql ~= " and";			
+				}
+				sql ~= " id=" ~ to!(string)(key);
+				i += 1;
+			}
+			if(i>0){
+				db.run( sql );
+			}
+		}
+		nodes_to_delete.clear();
 
 		//Re-enumerate any children that have shifted positions (or are new) according to their array positions
 		it.reset();

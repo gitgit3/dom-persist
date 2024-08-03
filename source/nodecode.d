@@ -106,6 +106,11 @@ class TreeNode {
 			return child_nodes[0];
 		}
 
+		TreeNode getChildAt( int pos ){
+			if( child_nodes.length<=pos ) return null;
+			return child_nodes[pos];
+		}
+
 		/**
 		 * Set the data for this node.
 		 * 
@@ -149,10 +154,21 @@ class TreeNode {
 			owner_tree.moveNode( this, new_p_node, pos );
 		}
 	
+		/**
+		 * Delete this node from the the tree.
+		 */
+		void deleteNode( ){
+			owner_tree.deleteNode( this );
+		}
+
+		/**
+		 * Internal use only
+		 */
 		void cutChild( TreeNode c_node ){
 			foreach( i, child; child_nodes ){
 				if(child == c_node ){
 					removeAt!TreeNode( child_nodes, cast(int)(i) );
+					c_node.node_data.pid = 0;	//it has no parent now
 					dirty = true;
 					return;
 				}

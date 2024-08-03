@@ -119,6 +119,8 @@ class AttribParser {
 
 unittest{
 
+	writeln( "Testing attribute parsing" );
+
 	string strAtts = "  color=\"red\" 	font='big font'  nowrap v-align='top' border=\"\"  ";
 	AttribParser atts = new AttribParser( strAtts );
 	
