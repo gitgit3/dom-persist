@@ -20,15 +20,16 @@ TreeNodeType getTreeNodeType( int tip ){
 	return TreeNodeType.nulltype;
 }
 
-
+/**
+ * Node data held by each TreeNode.
+ */
 struct NodeData {
 	
-	long ID;
-	string e_data;
-	long pid;
+	long ID;			// The (database) ID of this node. negative IDs are new nodes not yet flushed
+	string e_data;	// Data specific to the node. e.g. element name, or comment text etc..
+	long pid;		// Parent node ID. If not connected then zero
 	TreeNodeType type;
-	bool dirty = false;
-	long orig_pid=0;
+	bool dirty = false;	// true when any node data changes indicating a DB write is required.	
 	
 	this( long ID, string e_data, long pid, TreeNodeType type){
 		this.ID = ID;
@@ -39,14 +40,9 @@ struct NodeData {
 }
 
 /**
- * TreeNode is a class because we need the references to remain valid when we modify containers such as
- * the hashmap which indexes on ID.
+ * Each element in the tree is represented by an instance of TreeNode.
  * 
- * If we use a struct, then we need to hold the TreeNode data somewhere in order to use a pointer to the data. If
- * we move the data, such as updating a map, then all the pointers need to change, or we need pointers to pointers.
- * Either is not ideal. If we use references, as provided by a class, then the GC will track the references and ensure
- * that they remain valid. We can move the references knowing that the data remains in place on the heap
- * 
+ * This class contains node specific operations such as reading, mutation, relocation etc..
  */
 class TreeNode {
 	
@@ -155,14 +151,16 @@ class TreeNode {
 		}
 	
 		/**
-		 * Delete this node from the the tree.
+		 * Delete this node and all it's descendents from the the tree.
 		 */
 		void deleteNode( ){
 			owner_tree.deleteNode( this );
 		}
 
 		/**
-		 * Internal use only
+		 * Internal use only.
+		 * 
+		 * Locate the child node (c_node) and snip it off.
 		 */
 		void cutChild( TreeNode c_node ){
 			foreach( i, child; child_nodes ){

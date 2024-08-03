@@ -12,20 +12,32 @@ import std.conv;
 
 import nodecode;
 
-import d2sqlite3;	// https://d2sqlite3.dpldocs.info/v1.0.0/d2sqlite3.database.Database.this.html
-						// https://dlang-community.github.io/d2sqlite3/d2sqlite3.html
+// https://d2sqlite3.dpldocs.info/v1.0.0/d2sqlite3.database.Database.this.html
+// https://d2sqlite3.dpldocs.info/v1.0.0/source/tests.d.d.html
+// https://dlang-community.github.io/d2sqlite3/d2sqlite3.html
+// https://code.dlang.org/packages/d2sqlite3
+import d2sqlite3;	
 
 
+/**
+ * Return true if the database exists.
+ */
 bool db_exists( string sqlite_filename ){
 	return sqlite_filename.exists;
 }
 
+/**
+ * Drop the database and remove the DB file
+ */
 void db_drop( string sqlite_filename ){
 	if( sqlite_filename.exists ){
 		sqlite_filename.remove();
 	}	
 }
 
+/**
+ * Create the database file and the params table with the DB version number.
+ */
 Database db_create( string sqlite_filename, int db_ver ){
 	
 	auto db = Database( sqlite_filename );
@@ -35,82 +47,19 @@ Database db_create( string sqlite_filename, int db_ver ){
 }
 
 
-string get_openTag_commence( TreeNodeType nt, string e_data ){
-	
-	switch( nt ){
-	
-	case TreeNodeType.text:
-		return e_data;
-		
-	case TreeNodeType.comment:
-		return "<!--"~e_data;
-		
-	case TreeNodeType.docType:
-		return "<DOCTYPE "~e_data;
-
-	default:
-		return "<"~e_data;
-	}
-}
-
-string get_openTag_end( TreeNodeType nt, string e_data ){
-
-	switch( nt ){
-		
-	case TreeNodeType.comment:
-	case TreeNodeType.text:
-		return "";
-			
-	default:
-		switch(e_data){
-		case "input":
-		case "br":
-			return "/>";
-		default:
-		}
-		
-		return ">";
-	}
-	
-}
-
-string get_closeTag( TreeNodeType nt, string e_data ){
-
-	switch( nt ){
-		
-	case TreeNodeType.docType:
-	case TreeNodeType.text:
-		return "";
-		
-	case TreeNodeType.comment:
-		return "-->";
-		
-	default:
-		switch(e_data){
-		case "input":
-		case "br":
-			return "";
-		default:
-		}
-
-		return format("</%s>", e_data);
-	}
-	
-}
 
 struct TreeNameID {
 	long tree_id;
 	string name;
 }
 
-
 /**
  * An instance of this class contains access to a single tree. Tree operations are cached in RAM and only written to
- * disk during a save operation. This can be done safely because of the single user access to Sqlite.
+ * disk when flush is called. This can be done safely because of the single user access to Sqlite.
  * 
- * Multiple database connections should work on the same thread provided each is using a different tree.
+ * Multiple database connections have not been tested. 
+ * Multiple threads not yet supported.
  * 
- * Instantiation of the tree involves only one database select.
  */
 class Tree_Db {
 
@@ -176,6 +125,9 @@ class Tree_Db {
 
 	public:
 	
+	/**
+	 * Create the Database schema for the trees.
+	 */
 	static void db_create_schema( ref Database db ){		
 		db.run("CREATE TABLE IF NOT EXISTS doctree (ID INTEGER, e_data	TEXT,p_id INTEGER,t_id INTEGER NOT NULL,tree_id INTEGER NOT NULL,	c_order INTEGER, PRIMARY KEY( ID AUTOINCREMENT))");
 	}
@@ -205,7 +157,7 @@ class Tree_Db {
 	}
 
 	/**
-	 * Load a tree into RAM from database given the tree ID.
+	 * Load a tree into RAM from database given the tree ID. Reads the complete tree and involves only one database select.
 	 */
 	static Tree_Db loadTree( ref Database db, long tree_id ){
 		return new Tree_Db( &db, tree_id );		
@@ -437,6 +389,68 @@ class Tree_Db {
 	
 }
 
+private string get_openTag_commence( TreeNodeType nt, string e_data ){
+	
+	switch( nt ){
+	
+	case TreeNodeType.text:
+		return e_data;
+		
+	case TreeNodeType.comment:
+		return "<!--"~e_data;
+		
+	case TreeNodeType.docType:
+		return "<DOCTYPE "~e_data;
+
+	default:
+		return "<"~e_data;
+	}
+}
+
+private string get_openTag_end( TreeNodeType nt, string e_data ){
+
+	switch( nt ){
+		
+	case TreeNodeType.comment:
+	case TreeNodeType.text:
+		return "";
+			
+	default:
+		switch(e_data){
+		case "input":
+		case "br":
+			return "/>";
+		default:
+		}
+		
+		return ">";
+	}
+	
+}
+
+private string get_closeTag( TreeNodeType nt, string e_data ){
+
+	switch( nt ){
+		
+	case TreeNodeType.docType:
+	case TreeNodeType.text:
+		return "";
+		
+	case TreeNodeType.comment:
+		return "-->";
+		
+	default:
+		switch(e_data){
+		case "input":
+		case "br":
+			return "";
+		default:
+		}
+
+		return format("</%s>", e_data);
+	}
+	
+}
 
 /**
  * Iterator starting at any given TreeNode, traversing each of the descendent nodes, depth first and increasing child index.
