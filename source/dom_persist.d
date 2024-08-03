@@ -460,6 +460,7 @@ void removeAt(T)( ref T[] t, int pos ){
 	*/
 
 	// by far the slowest 154000 cpu cycles
+	//import std.algorithm;
 	//t = t.remove(pos);					
 
 }

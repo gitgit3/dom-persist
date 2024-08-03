@@ -244,7 +244,7 @@ unittest{
 	html_out = tree3.getTreeAsText( );	
 	assert( html_out == "<DOCTYPE html><html><head><script></script><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
 
-	writeln("Testing moveNode");
+	writeln("Testing test element move");
 	
 	//use the original tree to test a move the comment node	
 	auto tn_body = tn_head.nextSibling();
