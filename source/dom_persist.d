@@ -109,7 +109,7 @@ class Tree_Db {
 			//also order by the parent_id so that we know all siblings are grouped together
 			//and then by child order
 		
-			auto results = db.execute( format("select ID, e_data, p_id, t_id from doctree where tree_id=%d or id=%d order by p_id,c_order", tid, tid) );
+			auto results = db.execute( format("select ID, e_data, p_id, t_id, att_data from doctree where tree_id=%d or id=%d order by p_id,c_order", tid, tid) );
 			foreach (row; results){
 				
 				long id = row.peek!long(0);
@@ -119,7 +119,7 @@ class Tree_Db {
 					row.peek!string(1),
 					p_id,
 					getTreeNodeType( row.peek!int(3) )
-				));
+				), row.peek!string(4) );
 				all_nodes[id] = tn;
 				if(p_id==0) continue;
 				all_nodes[p_id].child_nodes ~= all_nodes[id];
@@ -135,7 +135,7 @@ class Tree_Db {
 	 * Create the Database schema for the trees.
 	 */
 	static void db_create_schema( ref Database db ){		
-		db.run("CREATE TABLE IF NOT EXISTS doctree (ID INTEGER, e_data	TEXT,p_id INTEGER,t_id INTEGER NOT NULL,tree_id INTEGER NOT NULL,	c_order INTEGER, PRIMARY KEY( ID AUTOINCREMENT))");
+		db.run("CREATE TABLE IF NOT EXISTS doctree (ID INTEGER, e_data	TEXT,p_id INTEGER,t_id INTEGER NOT NULL,tree_id INTEGER NOT NULL,	c_order INTEGER, att_data	TEXT, PRIMARY KEY( ID AUTOINCREMENT))");
 	}
 
 	/**
@@ -296,6 +296,10 @@ class Tree_Db {
 
 		debug_out("flush():");
 
+		Statement stmt_insert_with_atts = db.prepare("insert into doctree(e_data, p_id, t_id, tree_id, att_data ) values( ?,?,?,?,? )");
+		Statement stmt_insert = db.prepare("insert into doctree(e_data, p_id, t_id, tree_id ) values( ?,?,?,? )");
+		Statement stmt_update_with_atts = db.prepare("update doctree set e_data=?, p_id=?, att_data=? where id=?");		
+        
 		long new_tree = tree_id<0;
 
 		DocOrderIterator it = new DocOrderIterator( all_nodes[tree_id] );
@@ -310,7 +314,25 @@ class Tree_Db {
 
 				if(new_tree) tree_id=0;
 				
-				db.run( format("insert into doctree(e_data, p_id, t_id, tree_id ) values( '%s', %d, %d, %d )", nd.e_data, nd.pid, nd.type, tree_id ) );
+				if(tnode.hasAttributes()){
+					writeln("saving atts: ", tnode.getAttsAsString() );
+					stmt_insert_with_atts.reset();
+					stmt_insert_with_atts.bind( 1, nd.e_data);
+					stmt_insert_with_atts.bind( 2, nd.pid);
+					stmt_insert_with_atts.bind( 3, nd.type);
+					stmt_insert_with_atts.bind( 4, tree_id);
+					stmt_insert_with_atts.bind( 5, tnode.getAttsAsString() );
+					stmt_insert_with_atts.execute();
+					
+				}else{
+					stmt_insert.reset();
+					stmt_insert.bind( 1, nd.e_data);
+					stmt_insert.bind( 2, nd.pid);
+					stmt_insert.bind( 3, nd.type);
+					stmt_insert.bind( 4, tree_id);
+					stmt_insert.execute();
+
+				}
 
 				//update the node id
 				long oldid = tnode.node_data.ID;
@@ -323,8 +345,13 @@ class Tree_Db {
 				if(new_tree) tree_id = newID;
 				
 			}else if( nd.dirty ){
-				//dirty data and possibly pid too
-				db.run( format("update doctree set e_data='%s', p_id=%d where id=%d", nd.e_data, nd.pid, nd.ID ) );
+				//dirty data and possibly pid and atributes
+				stmt_update_with_atts.reset();
+				stmt_update_with_atts.bind( 1, nd.e_data );
+				stmt_update_with_atts.bind( 2, nd.pid );
+				stmt_update_with_atts.bind( 3, tnode.getAttsAsString() );
+				stmt_update_with_atts.bind( 4, nd.ID );
+				stmt_update_with_atts.execute();
 				nd.dirty = false;
 			}
 		}
@@ -384,7 +411,7 @@ class Tree_Db {
 		foreach( child; children){
 			NodeData nd = child.node_data;
 			strRtn ~= get_openTag_commence( nd.type, nd.e_data );
-			// --> add attributes if required
+			if(nd.type==TreeNodeType.element && child.hasAttributes() ) strRtn ~= " "~child.getAttsAsString();			
 			strRtn ~= get_openTag_end( nd.type, nd.e_data );
 			strRtn ~= getTreeAsText_r( child );
 			strRtn ~= get_closeTag( nd.type, nd.e_data );

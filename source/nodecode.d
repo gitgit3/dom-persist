@@ -10,6 +10,7 @@ import std.traits;
 import std.format;
 
 import dom_persist;
+import attributeHandler;
 
 
 enum TreeNodeType {
@@ -54,6 +55,7 @@ class TreeNode {
 	
 	private:
 	
+		AttributeMap	attMap;
 		Tree_Db owner_tree;
 	
 	// end private
@@ -64,11 +66,41 @@ class TreeNode {
 		TreeNode[] 		child_nodes;
 		bool				dirty;	// true indicates a change in child_nodes ordering
 
-		this( Tree_Db owner_tree, NodeData node_data){
+		this( Tree_Db owner_tree, NodeData node_data, string atts = null){
 			this.owner_tree = owner_tree;
 			this.node_data = node_data;
+			if(atts !is null ){
+				attMap = new AttributeMap(atts);
+			}
 		}
 		
+		bool hasAttributes(){
+			if(attMap is null) return false;
+			return attMap.getAttribCount()>0;
+		}
+		
+		void setAttribute( string name, string value ){
+			if(attMap is null) attMap = new AttributeMap();
+			attMap.setAttribute( name, value);
+			node_data.dirty = true;
+		}
+
+		string getAttribute( string name ){
+			if(attMap is null) return "";			
+			return attMap.getAttribute( name );
+		}
+		
+		string getAttsAsString(){
+			if(attMap is null) return "";
+			return attMap.getAttsAsString();
+		}
+
+		void removeAttribute( string name ){
+			if(attMap is null) return;
+			attMap.removeAttribute( name );
+			node_data.dirty = true;
+		}
+
 		/**
 		 * Returns the parent node of this node or null if no parent exists (i.e. tree-root)
 		 */

@@ -13,18 +13,49 @@ import std.stdio;
  * 
  * Remember to escape the " and/or ' with &quot; or &apos; if these values are required.
  */
-class AttribParser {
+class AttributeMap {
 	
-	string 			strAtts;
-	string[string]	mapAtts;
+	string[string]		attrib_map;
 	
-	this( string strAtts ){
-		this.strAtts = strAtts;
+	this( string strAtts="" ){		
+		if(strAtts!=""){
+			attrib_map = parse( strAtts );
+		}
 	}
 	
-	ref string[string] getAsMap(){
+	string[string] getAttribMap( ){
+		return attrib_map;
+	}
+	
+	int getAttribCount( ){
+		return cast(int)(attrib_map.length);
+	}
+
+	string getAttribute( string name ){
+		if( name in attrib_map ) return attrib_map[name];
+		return null;
+	}
+	
+	string getAttsAsString(){
+		if(attrib_map.length==0) return "";
+		string rtn = "";
+		foreach( key; attrib_map.keys() ){
+			rtn ~= key ~ "=\"" ~ attrib_map[key] ~ "\" ";
+		}
+		return rtn;		
+	}
+	
+	void setAttribute( string name, string value){
+		attrib_map[name] = value;
+	}
+	
+	void removeAttribute( string name ){
+		if( name in attrib_map ) attrib_map.remove(name);
+	}
 		
-		if(mapAtts !is null ) return mapAtts;
+	static string[string] parse( string strAtts ){
+		
+		string[string] mapAtts;
 		
 		int state = 0;
 		string nxtKey = "";
@@ -122,9 +153,9 @@ unittest{
 	writeln( "Testing attribute parsing" );
 
 	string strAtts = "  color=\"red\" 	font='big font'  nowrap v-align='top' border=\"\"  ";
-	AttribParser atts = new AttribParser( strAtts );
+	AttributeMap atts = new AttributeMap( strAtts );
 	
-	auto attMap =  atts.getAsMap();
+	auto attMap =  atts.getAttribMap();
 	foreach( key; attMap.keys() ){
 		
 		string value = attMap[key];
@@ -155,12 +186,12 @@ unittest{
 	}
 
 	
-	atts = new AttribParser( "" );
-	attMap =  atts.getAsMap();
+	atts = new AttributeMap( "" );
+	attMap =  atts.getAttribMap();
 	assert( attMap.length==0 );
 
-	atts = new AttribParser( "color='pink' > other garbage" );
-	attMap =  atts.getAsMap();
+	atts = new AttributeMap( "color='pink' > other garbage" );
+	attMap =  atts.getAttribMap();
 	assert( attMap.length==1 );	
 	assert( attMap["color"]=="pink" );
 	

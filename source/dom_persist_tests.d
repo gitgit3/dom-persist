@@ -249,6 +249,7 @@ unittest{
 	//check db contents using a new tree
 	Tree_Db tree3 = Tree_Db.loadTree( db, tree_list[0].tree_id );
 	html_out = tree3.getTreeAsText( );	
+	//writeln( html_out );
 	assert( html_out == "<DOCTYPE html><html><head><script></script><!--An edit took place--></head><body>This is some text with more text<input/></body></html>");
 
 	writeln("Testing test element move");
@@ -301,6 +302,51 @@ unittest{
 	
 			
 }
+
+unittest{
+	
+	writeln( "Testing attributes" );
+
+
+	auto db = Database( sqlite_filename );
+	
+	TreeNameID[] tree_list = Tree_Db.getTreeList( db );
+	assert( tree_list.length==2 );
+	
+	Tree_Db tree = Tree_Db.loadTree( db, tree_list[0].tree_id );
+	string html_out = tree.getTreeAsText( );	
+	//writeln( html_out );
+	assert( html_out == "<DOCTYPE html><html><head></head><body><!--An edit took place-->This is some text with more text<input/></body></html>");
+	
+	TreeNode tn_body = tree.getTreeRoot().getChildAt(1).getChildAt(1);
+	tn_body.setAttribute( "border", "solid red 1px");
+	
+	assert( tn_body.hasAttributes );	
+	tree.flush();
+	
+	html_out = tree.getTreeAsText( );
+	//writeln( html_out );
+	assert( html_out == "<DOCTYPE html><html><head></head><body border=\"solid red 1px\" ><!--An edit took place-->This is some text with more text<input/></body></html>");
+	
+	tn_body.setAttribute( "border", "solid red 2px");
+	tn_body.setAttribute( "v-align", "top");
+	html_out = tree.getTreeAsText( );
+	//writeln( html_out );
+	if( html_out != "<DOCTYPE html><html><head></head><body border=\"solid red 2px\" v-align=\"top\" ><!--An edit took place-->This is some text with more text<input/></body></html>" &&
+		html_out != "<DOCTYPE html><html><head></head><body v-align=\"top\" border=\"solid red 2px\" ><!--An edit took place-->This is some text with more text<input/></body></html>" ){
+		// the order of the attributes does not matter, either one will do.
+		assert(false);
+	}
+	
+	tn_body.removeAttribute("border");
+	tree.flush();
+	
+	html_out = tree.getTreeAsText( );
+	assert( html_out == "<DOCTYPE html><html><head></head><body v-align=\"top\" ><!--An edit took place-->This is some text with more text<input/></body></html>");
+	
+}
+
+
 
 /*unittest{
 
